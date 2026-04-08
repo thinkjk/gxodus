@@ -11,7 +11,7 @@ import (
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
-	"github.com/jason/gxodus/internal/config"
+	"github.com/thinkjk/gxodus/internal/config"
 )
 
 type Options struct {

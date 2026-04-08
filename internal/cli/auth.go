@@ -3,8 +3,8 @@ package cli
 import (
 	"fmt"
 
-	"github.com/jason/gxodus/internal/auth"
-	"github.com/jason/gxodus/internal/browser"
+	"github.com/thinkjk/gxodus/internal/auth"
+	"github.com/thinkjk/gxodus/internal/browser"
 	"github.com/spf13/cobra"
 )
 

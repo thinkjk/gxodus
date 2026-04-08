@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/jason/gxodus/internal/auth"
-	"github.com/jason/gxodus/internal/browser"
-	"github.com/jason/gxodus/internal/config"
-	"github.com/jason/gxodus/internal/downloader"
-	"github.com/jason/gxodus/internal/extractor"
-	"github.com/jason/gxodus/internal/notify"
-	"github.com/jason/gxodus/internal/poller"
+	"github.com/thinkjk/gxodus/internal/auth"
+	"github.com/thinkjk/gxodus/internal/browser"
+	"github.com/thinkjk/gxodus/internal/config"
+	"github.com/thinkjk/gxodus/internal/downloader"
+	"github.com/thinkjk/gxodus/internal/extractor"
+	"github.com/thinkjk/gxodus/internal/notify"
+	"github.com/thinkjk/gxodus/internal/poller"
 	"github.com/spf13/cobra"
 )
 

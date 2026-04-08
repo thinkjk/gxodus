@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jason/gxodus/internal/browser"
+	"github.com/thinkjk/gxodus/internal/browser"
 )
 
 type Config struct {

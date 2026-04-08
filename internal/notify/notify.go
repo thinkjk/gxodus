@@ -7,7 +7,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/jason/gxodus/internal/config"
+	"github.com/thinkjk/gxodus/internal/config"
 )
 
 type EventData struct {

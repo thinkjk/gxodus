@@ -5,13 +5,13 @@ Automate Google Takeout exports. Authenticate once, then schedule periodic data 
 ## Install
 
 ```bash
-go install github.com/jason/gxodus/cmd/gxodus@latest
+go install github.com/thinkjk/gxodus/cmd/gxodus@latest
 ```
 
 Or build from source:
 
 ```bash
-git clone https://github.com/jason/gxodus.git
+git clone https://github.com/thinkjk/gxodus.git
 cd gxodus
 make build
 ```

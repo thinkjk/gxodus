@@ -11,7 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/jason/gxodus/internal/config"
+	"github.com/thinkjk/gxodus/internal/config"
 )
 
 const sessionFile = "session.enc"

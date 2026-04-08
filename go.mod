@@ -1,4 +1,4 @@
-module github.com/jason/gxodus
+module github.com/thinkjk/gxodus
 
 go 1.26.2
 
