@@ -19,6 +19,7 @@ var (
 	extract      bool
 	noKeepZip    bool
 	pollInterval string
+	fileSize     string
 )
 
 var exportCmd = &cobra.Command{
@@ -45,6 +46,9 @@ var exportCmd = &cobra.Command{
 		}
 		if pollInterval != "" {
 			cfg.PollInterval = pollInterval
+		}
+		if fileSize != "" {
+			cfg.FileSize = fileSize
 		}
 
 		// Check for saved session
@@ -88,7 +92,9 @@ var exportCmd = &cobra.Command{
 		}
 
 		// Initiate export
-		_, err = browser.InitiateExport(browserCtx)
+		_, err = browser.InitiateExport(browserCtx, browser.ExportOptions{
+			FileSize: cfg.FileSize,
+		})
 		if err != nil {
 			notify.Fire(cfg.Notify, "error", notify.EventData{Error: err.Error()})
 			if err.Error() == "session expired: redirected to login page" {
@@ -155,6 +161,7 @@ func init() {
 	exportCmd.Flags().BoolVar(&extract, "extract", false, "extract archives into organized directories")
 	exportCmd.Flags().BoolVar(&noKeepZip, "no-keep-zip", false, "remove ZIP files after extraction (requires --extract)")
 	exportCmd.Flags().StringVar(&pollInterval, "poll-interval", "", "poll interval for checking export status (e.g., 5m, 10m)")
+	exportCmd.Flags().StringVar(&fileSize, "file-size", "", "archive split size (1GB, 2GB, 4GB, 10GB, 50GB)")
 	rootCmd.AddCommand(exportCmd)
 }
 

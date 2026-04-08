@@ -20,8 +20,12 @@ type ExportResult struct {
 	Started time.Time
 }
 
+type ExportOptions struct {
+	FileSize string // e.g. "1GB", "2GB", "4GB", "10GB", "50GB"
+}
+
 // InitiateExport navigates to Google Takeout and creates a new export.
-func InitiateExport(ctx context.Context) (*ExportResult, error) {
+func InitiateExport(ctx context.Context, opts ExportOptions) (*ExportResult, error) {
 	fmt.Println("Navigating to Google Takeout...")
 
 	if err := chromedp.Run(ctx, chromedp.Navigate(takeoutURL)); err != nil {
@@ -58,7 +62,7 @@ func InitiateExport(ctx context.Context) (*ExportResult, error) {
 	// - Frequency: "Export once"
 	// - File type: ZIP
 	// - File size: 2GB
-	if err := configureExportOptions(ctx); err != nil {
+	if err := configureExportOptions(ctx, opts.FileSize); err != nil {
 		return nil, wrapErr(ctx, "configuring export options", err)
 	}
 
@@ -192,11 +196,67 @@ func scrollAndClickNextStep(ctx context.Context) error {
 	return fmt.Errorf("could not find 'Next step' button — Google may have changed the Takeout UI")
 }
 
-func configureExportOptions(ctx context.Context) error {
-	// The export options page should already have reasonable defaults
-	// (export once, ZIP, 2GB). We just wait for it to load and proceed.
+func configureExportOptions(ctx context.Context, fileSize string) error {
+	// Wait for the options page to load
 	if err := chromedp.Run(ctx, chromedp.Sleep(2*time.Second)); err != nil {
 		return err
+	}
+
+	// Select file size if specified and different from default
+	if fileSize != "" && fileSize != "2GB" {
+		// Google Takeout has a dropdown for file size with options like 1GB, 2GB, 4GB, 10GB, 50GB
+		// Try to find and click the file size dropdown, then select the desired size
+		sizeSelectors := []string{
+			`//span[contains(text(), "GB")]`,
+			`[data-value*="GB"]`,
+		}
+
+		for _, sel := range sizeSelectors {
+			var nodes []*cdp.Node
+			queryOpt := chromedp.ByQuery
+			if strings.HasPrefix(sel, "//") {
+				queryOpt = chromedp.BySearch
+			}
+			err := chromedp.Run(ctx, chromedp.Nodes(sel, &nodes, queryOpt, chromedp.AtLeast(0)))
+			if err == nil && len(nodes) > 0 {
+				// Click the dropdown to open it
+				if err := chromedp.Run(ctx,
+					chromedp.Click(sel, queryOpt),
+					chromedp.Sleep(1*time.Second),
+				); err != nil {
+					continue
+				}
+
+				// Now select the desired size
+				sizeText := fileSize
+				optionSelectors := []string{
+					fmt.Sprintf(`//li[contains(text(), "%s")]`, sizeText),
+					fmt.Sprintf(`//div[contains(text(), "%s")]`, sizeText),
+					fmt.Sprintf(`//option[contains(text(), "%s")]`, sizeText),
+					fmt.Sprintf(`[data-value="%s"]`, sizeText),
+				}
+
+				for _, optSel := range optionSelectors {
+					var optNodes []*cdp.Node
+					optQueryOpt := chromedp.ByQuery
+					if strings.HasPrefix(optSel, "//") {
+						optQueryOpt = chromedp.BySearch
+					}
+					err := chromedp.Run(ctx, chromedp.Nodes(optSel, &optNodes, optQueryOpt, chromedp.AtLeast(0)))
+					if err == nil && len(optNodes) > 0 {
+						chromedp.Run(ctx,
+							chromedp.Click(optSel, optQueryOpt),
+							chromedp.Sleep(1*time.Second),
+						)
+						fmt.Printf("Selected file size: %s\n", fileSize)
+						return nil
+					}
+				}
+				break
+			}
+		}
+
+		fmt.Printf("Warning: could not set file size to %s, using Takeout default\n", fileSize)
 	}
 
 	return nil
