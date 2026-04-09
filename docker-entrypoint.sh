@@ -6,15 +6,18 @@ COMMAND="${GXODUS_COMMAND:-${1:-export}}"
 
 # Build common args
 CONFIG_DIR="${GXODUS_CONFIG_DIR:-/config}"
-CONFIG_ARG="--config ${CONFIG_DIR}/config.toml"
+CONFIG_ARG="--config"
+CONFIG_VAL="${CONFIG_DIR}/config.toml"
 SESSION_FILE="${CONFIG_DIR}/session.enc"
 
-CHROME_ARG=""
-[ -n "$GXODUS_REMOTE_CHROME" ] && CHROME_ARG="--remote-chrome $GXODUS_REMOTE_CHROME"
+echo "gxodus: command=$COMMAND"
+echo "gxodus: config=$CONFIG_VAL"
+echo "gxodus: remote_chrome=${GXODUS_REMOTE_CHROME:-(not set)}"
 
 run_auth() {
     if [ -n "$GXODUS_REMOTE_CHROME" ]; then
-        gxodus auth $CHROME_ARG $CONFIG_ARG
+        echo "gxodus: authenticating via remote chrome..."
+        gxodus auth --remote-chrome "$GXODUS_REMOTE_CHROME" "$CONFIG_ARG" "$CONFIG_VAL"
     else
         echo "Starting noVNC for interactive authentication..."
         echo "Access the browser at: http://localhost:6080/vnc.html"
@@ -26,8 +29,17 @@ run_auth() {
         websockify --web /usr/share/novnc 6080 localhost:5900 &
         sleep 1
 
-        gxodus auth $CONFIG_ARG
+        gxodus auth "$CONFIG_ARG" "$CONFIG_VAL"
     fi
+}
+
+build_export_args() {
+    ARGS=""
+    [ -n "$GXODUS_FILE_SIZE" ] && ARGS="$ARGS --file-size $GXODUS_FILE_SIZE"
+    [ -n "$GXODUS_POLL_INTERVAL" ] && ARGS="$ARGS --poll-interval $GXODUS_POLL_INTERVAL"
+    [ "$GXODUS_EXTRACT" = "true" ] && ARGS="$ARGS --extract"
+    [ "$GXODUS_NO_KEEP_ZIP" = "true" ] && ARGS="$ARGS --no-keep-zip"
+    echo "$ARGS"
 }
 
 if [ "$COMMAND" = "auth" ]; then
@@ -42,16 +54,20 @@ elif [ "$COMMAND" = "export" ]; then
         echo "Authentication complete. Starting export..."
     fi
 
-    EXTRA_ARGS=""
-    [ -n "$GXODUS_FILE_SIZE" ] && EXTRA_ARGS="$EXTRA_ARGS --file-size $GXODUS_FILE_SIZE"
-    [ -n "$GXODUS_POLL_INTERVAL" ] && EXTRA_ARGS="$EXTRA_ARGS --poll-interval $GXODUS_POLL_INTERVAL"
-    [ "$GXODUS_EXTRACT" = "true" ] && EXTRA_ARGS="$EXTRA_ARGS --extract"
-    [ "$GXODUS_NO_KEEP_ZIP" = "true" ] && EXTRA_ARGS="$EXTRA_ARGS --no-keep-zip"
+    EXPORT_ARGS=$(build_export_args)
 
-    exec gxodus export --output "${GXODUS_OUTPUT_DIR:-/exports}" $CHROME_ARG $CONFIG_ARG $EXTRA_ARGS
+    if [ -n "$GXODUS_REMOTE_CHROME" ]; then
+        exec gxodus export --output "${GXODUS_OUTPUT_DIR:-/exports}" --remote-chrome "$GXODUS_REMOTE_CHROME" "$CONFIG_ARG" "$CONFIG_VAL" $EXPORT_ARGS
+    else
+        exec gxodus export --output "${GXODUS_OUTPUT_DIR:-/exports}" "$CONFIG_ARG" "$CONFIG_VAL" $EXPORT_ARGS
+    fi
 
 elif [ "$COMMAND" = "status" ]; then
-    exec gxodus status $CHROME_ARG $CONFIG_ARG
+    if [ -n "$GXODUS_REMOTE_CHROME" ]; then
+        exec gxodus status --remote-chrome "$GXODUS_REMOTE_CHROME" "$CONFIG_ARG" "$CONFIG_VAL"
+    else
+        exec gxodus status "$CONFIG_ARG" "$CONFIG_VAL"
+    fi
 
 else
     exec gxodus "$@"
