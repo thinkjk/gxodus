@@ -9,9 +9,8 @@ import (
 )
 
 var (
-	authCheck    bool
-	authRevoke   bool
-	remoteChrome string
+	authCheck  bool
+	authRevoke bool
 )
 
 var authCmd = &cobra.Command{
@@ -76,6 +75,5 @@ var authCmd = &cobra.Command{
 func init() {
 	authCmd.Flags().BoolVar(&authCheck, "check", false, "validate saved session is still active")
 	authCmd.Flags().BoolVar(&authRevoke, "revoke", false, "delete saved session data")
-	authCmd.Flags().StringVar(&remoteChrome, "remote-chrome", "", "WebSocket URL for remote Chrome instance (e.g., ws://browserless:3000)")
 	rootCmd.AddCommand(authCmd)
 }

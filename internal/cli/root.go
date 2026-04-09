@@ -9,8 +9,9 @@ import (
 var Version = "dev"
 
 var (
-	cfgFile string
-	verbose bool
+	cfgFile      string
+	verbose      bool
+	remoteChrome string
 )
 
 var rootCmd = &cobra.Command{
@@ -22,6 +23,7 @@ var rootCmd = &cobra.Command{
 func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default ~/.config/gxodus/config.toml)")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "enable verbose output")
+	rootCmd.PersistentFlags().StringVar(&remoteChrome, "remote-chrome", "", "WebSocket URL for remote Chrome instance (e.g., ws://browserless:3000)")
 }
 
 func Execute() error {
