@@ -14,23 +14,21 @@ echo "gxodus: command=$COMMAND"
 echo "gxodus: config=$CONFIG_VAL"
 echo "gxodus: remote_chrome=${GXODUS_REMOTE_CHROME:-(not set)}"
 
+# Auth always uses noVNC with local Chrome so the user can interact with the
+# browser to complete Google login. Remote Chrome (browserless) is only used
+# for headless commands (export, status).
 run_auth() {
-    if [ -n "$GXODUS_REMOTE_CHROME" ]; then
-        echo "gxodus: authenticating via remote chrome..."
-        gxodus auth --remote-chrome "$GXODUS_REMOTE_CHROME" "$CONFIG_ARG" "$CONFIG_VAL"
-    else
-        echo "Starting noVNC for interactive authentication..."
-        echo "Access the browser at: http://localhost:6080/vnc.html"
+    echo "Starting noVNC for interactive authentication..."
+    echo "Access the browser at: http://<your-unraid-ip>:6080/vnc.html"
 
-        Xvfb :99 -screen 0 1280x720x24 &
-        sleep 1
-        fluxbox &
-        x11vnc -display :99 -nopw -forever -shared -rfbport 5900 &
-        websockify --web /usr/share/novnc 6080 localhost:5900 &
-        sleep 1
+    Xvfb :99 -screen 0 1280x720x24 &
+    sleep 1
+    fluxbox &
+    x11vnc -display :99 -nopw -forever -shared -rfbport 5900 &
+    websockify --web /usr/share/novnc 6080 localhost:5900 &
+    sleep 1
 
-        gxodus auth "$CONFIG_ARG" "$CONFIG_VAL"
-    fi
+    gxodus auth "$CONFIG_ARG" "$CONFIG_VAL"
 }
 
 build_export_args() {
@@ -49,6 +47,7 @@ elif [ "$COMMAND" = "export" ]; then
     # Auto-auth if no session exists
     if [ ! -f "$SESSION_FILE" ]; then
         echo "No session found. Starting authentication first..."
+        echo "After logging in via noVNC, the export will continue automatically."
         run_auth
         echo ""
         echo "Authentication complete. Starting export..."
