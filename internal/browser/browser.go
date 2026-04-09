@@ -34,6 +34,13 @@ func newLocalContext(ctx context.Context, opts Options) (context.Context, contex
 		chromedp.NoFirstRun,
 		chromedp.NoDefaultBrowserCheck,
 		chromedp.DisableGPU,
+		chromedp.NoSandbox,
+		chromedp.Flag("disable-dev-shm-usage", true),
+	}
+
+	// Use CHROME_PATH env var if set (for Docker with Chromium)
+	if chromePath := os.Getenv("CHROME_PATH"); chromePath != "" {
+		chromedpOpts = append(chromedpOpts, chromedp.ExecPath(chromePath))
 	}
 
 	if opts.Headless {
