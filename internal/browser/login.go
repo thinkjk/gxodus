@@ -115,3 +115,17 @@ func isLoggedIn(url string) bool {
 		strings.Contains(url, "mail.google.com") ||
 		strings.Contains(url, "drive.google.com")
 }
+
+type devtoolsTab struct {
+	Type string `json:"type"`
+	URL  string `json:"url"`
+}
+
+func findLoggedInTab(tabs []devtoolsTab) bool {
+	for _, t := range tabs {
+		if t.Type == "page" && isLoggedIn(t.URL) {
+			return true
+		}
+	}
+	return false
+}
