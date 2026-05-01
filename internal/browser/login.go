@@ -5,49 +5,125 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/chromedp/chromedp"
+	"github.com/thinkjk/gxodus/internal/config"
 )
 
 const (
-	googleLoginURL   = "https://accounts.google.com"
-	googleAccountURL = "https://myaccount.google.com"
+	googleLoginURL      = "https://accounts.google.com"
+	googleAccountURL    = "https://myaccount.google.com"
+	defaultDevToolsPort = 9222
 )
 
-// InteractiveLogin opens a visible browser for the user to complete Google login.
-// It returns the session cookies once login is detected.
-func InteractiveLogin(ctx context.Context, remoteURL string) ([]*http.Cookie, error) {
-	browserCtx, cancel, err := NewContext(ctx, Options{
-		Headless:  false,
-		RemoteURL: remoteURL,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("creating browser context: %w", err)
+// InteractiveLogin spawns a plain Chromium (no chromedp launcher, no automation
+// flags) so the user can complete Google login without triggering Google's
+// "browser may not be secure" block. Login completion is detected by polling
+// the DevTools HTTP API. Once detected, chromedp attaches via NewRemoteAllocator
+// to extract cookies, then chromium is shut down.
+//
+// remoteURL is intentionally ignored: interactive login REQUIRES a local
+// chromium so we can spawn it without CDP-driven automation flags. The remote
+// browserless instance is reserved for headless export/status flows.
+func InteractiveLogin(ctx context.Context, _ string) ([]*http.Cookie, error) {
+	chromePath := os.Getenv("CHROME_PATH")
+	if chromePath == "" {
+		chromePath = "chromium"
 	}
-	defer cancel()
+
+	profileDir := filepath.Join(config.ConfigDir(), "chrome-profile")
+	if err := os.MkdirAll(profileDir, 0700); err != nil {
+		return nil, fmt.Errorf("creating chrome profile dir: %w", err)
+	}
+
+	port := defaultDevToolsPort
+	debugBaseURL := fmt.Sprintf("http://localhost:%d", port)
+
+	args := []string{
+		fmt.Sprintf("--user-data-dir=%s", profileDir),
+		fmt.Sprintf("--remote-debugging-port=%d", port),
+		"--no-first-run",
+		"--no-default-browser-check",
+		"--no-sandbox",
+		"--disable-dev-shm-usage",
+		"--start-maximized",
+		googleLoginURL,
+	}
+
+	cmd := exec.CommandContext(ctx, chromePath, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = 3 * time.Second
+
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("launching chromium: %w", err)
+	}
+	defer func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Signal(syscall.SIGTERM)
+			_ = cmd.Wait()
+		}
+	}()
+
+	if err := waitForDevTools(ctx, debugBaseURL, 30*time.Second); err != nil {
+		return nil, fmt.Errorf("chromium devtools not ready: %w", err)
+	}
 
 	fmt.Println("Opening browser for Google login...")
 	fmt.Println("Please log in to your Google account. The browser will close automatically once login is detected.")
 
-	if err := chromedp.Run(browserCtx, chromedp.Navigate(googleLoginURL)); err != nil {
-		return nil, fmt.Errorf("navigating to login: %w", err)
-	}
-
-	// Poll URL until we detect successful login
-	if err := waitForLogin(browserCtx); err != nil {
+	if err := pollForLogin(ctx, debugBaseURL); err != nil {
 		return nil, fmt.Errorf("waiting for login: %w", err)
 	}
 
 	fmt.Println("Login detected! Extracting session...")
 
+	wsURL, err := getBrowserWebSocketURL(debugBaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("getting browser websocket url: %w", err)
+	}
+
+	browserCtx, cancel, err := NewContext(ctx, Options{RemoteURL: wsURL})
+	if err != nil {
+		return nil, fmt.Errorf("attaching chromedp: %w", err)
+	}
+	defer cancel()
+
 	cookies, err := ExtractCookies(browserCtx)
 	if err != nil {
 		return nil, fmt.Errorf("extracting cookies: %w", err)
 	}
-
 	return cookies, nil
+}
+
+func pollForLogin(ctx context.Context, baseURL string) error {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	timeout := time.After(10 * time.Minute)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timeout:
+			return fmt.Errorf("login timed out after 10 minutes")
+		case <-ticker.C:
+			tabs, err := listTabs(baseURL)
+			if err != nil {
+				continue
+			}
+			if findLoggedInTab(tabs) {
+				return nil
+			}
+		}
+	}
 }
 
 // CheckSession validates that saved cookies represent an active Google session.
@@ -83,31 +159,6 @@ func CheckSession(ctx context.Context, cookies []*http.Cookie, remoteURL string)
 	}
 
 	return true, nil
-}
-
-func waitForLogin(ctx context.Context) error {
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	timeout := time.After(10 * time.Minute)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-timeout:
-			return fmt.Errorf("login timed out after 10 minutes")
-		case <-ticker.C:
-			var currentURL string
-			if err := chromedp.Run(ctx, chromedp.Location(&currentURL)); err != nil {
-				continue // Browser might be in transition
-			}
-
-			if isLoggedIn(currentURL) {
-				return nil
-			}
-		}
-	}
 }
 
 func isLoggedIn(url string) bool {
