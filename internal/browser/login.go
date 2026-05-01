@@ -42,6 +42,13 @@ func InteractiveLogin(ctx context.Context, _ string) ([]*http.Cookie, error) {
 		return nil, fmt.Errorf("creating chrome profile dir: %w", err)
 	}
 
+	// Remove stale singleton locks left behind if a prior chromium exited
+	// without cleaning up (e.g. container hard-killed mid-session). Without
+	// this, the new chromium refuses to start and waitForDevTools times out.
+	for _, name := range []string{"SingletonLock", "SingletonCookie", "SingletonSocket"} {
+		_ = os.Remove(filepath.Join(profileDir, name))
+	}
+
 	port := defaultDevToolsPort
 	debugBaseURL := fmt.Sprintf("http://localhost:%d", port)
 
