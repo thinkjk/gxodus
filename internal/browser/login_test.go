@@ -1,6 +1,10 @@
 package browser
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
 
 func TestFindLoggedInTab(t *testing.T) {
 	tests := []struct {
@@ -48,5 +52,36 @@ func TestFindLoggedInTab(t *testing.T) {
 				t.Errorf("findLoggedInTab() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestGetBrowserWebSocketURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/json/version" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"webSocketDebuggerUrl": "ws://localhost:9222/devtools/browser/abc-123"}`))
+	}))
+	defer srv.Close()
+
+	got, err := getBrowserWebSocketURL(srv.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "ws://localhost:9222/devtools/browser/abc-123"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestGetBrowserWebSocketURLEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	if _, err := getBrowserWebSocketURL(srv.URL); err == nil {
+		t.Error("expected error when webSocketDebuggerUrl missing")
 	}
 }

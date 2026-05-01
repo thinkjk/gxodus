@@ -2,6 +2,7 @@ package browser
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -121,6 +122,10 @@ type devtoolsTab struct {
 	URL  string `json:"url"`
 }
 
+type devtoolsVersion struct {
+	WebSocketDebuggerURL string `json:"webSocketDebuggerUrl"`
+}
+
 func findLoggedInTab(tabs []devtoolsTab) bool {
 	for _, t := range tabs {
 		if t.Type == "page" && isLoggedIn(t.URL) {
@@ -128,4 +133,20 @@ func findLoggedInTab(tabs []devtoolsTab) bool {
 		}
 	}
 	return false
+}
+
+func getBrowserWebSocketURL(baseURL string) (string, error) {
+	resp, err := http.Get(baseURL + "/json/version")
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	var v devtoolsVersion
+	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
+		return "", err
+	}
+	if v.WebSocketDebuggerURL == "" {
+		return "", fmt.Errorf("no webSocketDebuggerUrl in /json/version response")
+	}
+	return v.WebSocketDebuggerURL, nil
 }
