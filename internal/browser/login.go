@@ -150,3 +150,36 @@ func getBrowserWebSocketURL(baseURL string) (string, error) {
 	}
 	return v.WebSocketDebuggerURL, nil
 }
+
+func listTabs(baseURL string) ([]devtoolsTab, error) {
+	resp, err := http.Get(baseURL + "/json/list")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var tabs []devtoolsTab
+	if err := json.NewDecoder(resp.Body).Decode(&tabs); err != nil {
+		return nil, err
+	}
+	return tabs, nil
+}
+
+func waitForDevTools(ctx context.Context, baseURL string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		resp, err := http.Get(baseURL + "/json/version")
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return nil
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return fmt.Errorf("devtools at %s not ready within %s", baseURL, timeout)
+}

@@ -1,9 +1,12 @@
 package browser
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestFindLoggedInTab(t *testing.T) {
@@ -83,5 +86,61 @@ func TestGetBrowserWebSocketURLEmpty(t *testing.T) {
 
 	if _, err := getBrowserWebSocketURL(srv.URL); err == nil {
 		t.Error("expected error when webSocketDebuggerUrl missing")
+	}
+}
+
+func TestListTabs(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/json/list" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`[
+			{"type": "page", "url": "https://accounts.google.com/signin"},
+			{"type": "page", "url": "https://drive.google.com/"}
+		]`))
+	}))
+	defer srv.Close()
+
+	tabs, err := listTabs(srv.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(tabs) != 2 {
+		t.Fatalf("expected 2 tabs, got %d", len(tabs))
+	}
+	if !findLoggedInTab(tabs) {
+		t.Error("expected drive tab to register as logged-in")
+	}
+}
+
+func TestWaitForDevToolsBecomesReady(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&hits, 1) < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(`{"webSocketDebuggerUrl": "ws://x"}`))
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := waitForDevTools(ctx, srv.URL, 3*time.Second); err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+}
+
+func TestWaitForDevToolsTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := waitForDevTools(ctx, srv.URL, 500*time.Millisecond); err == nil {
+		t.Error("expected timeout error, got nil")
 	}
 }
