@@ -21,12 +21,27 @@ run_auth() {
     echo "Starting noVNC for interactive authentication..."
     echo "Access the browser at: http://<your-unraid-ip>:6080/vnc.html"
 
-    Xvfb :99 -screen 0 1280x720x24 &
-    sleep 1
-    fluxbox &
-    x11vnc -display :99 -nopw -forever -shared -rfbport 5900 &
-    websockify --web /usr/share/novnc 6080 localhost:5900 &
-    sleep 1
+    mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
+    rm -f /tmp/.X99-lock
+
+    Xvfb :99 -screen 0 1280x720x24 -ac >/tmp/xvfb.log 2>&1 &
+    XVFB_PID=$!
+
+    for i in $(seq 1 30); do
+        [ -S /tmp/.X11-unix/X99 ] && break
+        if ! kill -0 "$XVFB_PID" 2>/dev/null; then
+            echo "ERROR: Xvfb died on startup. Log:"
+            cat /tmp/xvfb.log
+            return 1
+        fi
+        sleep 0.2
+    done
+
+    [ -S /tmp/.X11-unix/X99 ] || { echo "ERROR: Xvfb not ready in 6s"; cat /tmp/xvfb.log; return 1; }
+
+    fluxbox >/tmp/fluxbox.log 2>&1 &
+    x11vnc -display :99 -nopw -forever -shared -rfbport 5900 >/tmp/x11vnc.log 2>&1 &
+    websockify --web /usr/share/novnc 6080 localhost:5900 >/tmp/websockify.log 2>&1 &
 
     gxodus auth "$CONFIG_ARG" "$CONFIG_VAL"
 }
