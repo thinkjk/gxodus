@@ -67,7 +67,12 @@ func newLocalContext(ctx context.Context, opts Options) (context.Context, contex
 }
 
 func newRemoteContext(ctx context.Context, wsURL string) (context.Context, context.CancelFunc, error) {
-	allocCtx, allocCancel := chromedp.NewRemoteAllocator(ctx, wsURL)
+	// NoModifyURL: chromedp's default behavior is to fetch /json/version from
+	// the URL and use the webSocketDebuggerUrl it returns. Browserless v2
+	// returns chromium's internal bind address (ws://0.0.0.0:3000/...) there,
+	// which is unreachable from outside the browserless container. Use the URL
+	// the user gave us verbatim.
+	allocCtx, allocCancel := chromedp.NewRemoteAllocator(ctx, wsURL, chromedp.NoModifyURL)
 	taskCtx, taskCancel := chromedp.NewContext(allocCtx)
 
 	cancel := func() {
