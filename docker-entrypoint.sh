@@ -13,12 +13,15 @@ SESSION_FILE="${CONFIG_DIR}/session.enc"
 echo "gxodus: command=$COMMAND"
 echo "gxodus: config=$CONFIG_VAL"
 echo "gxodus: remote_chrome=${GXODUS_REMOTE_CHROME:-(not set)}"
+echo "gxodus: interval=${GXODUS_INTERVAL:-(not set, one-shot mode)}"
 
-# Auth always uses noVNC with local Chrome so the user can interact with the
-# browser to complete Google login. Remote Chrome (browserless) is only used
-# for headless commands (export, status).
-run_auth() {
-    echo "Starting noVNC for interactive authentication..."
+# Idempotent: start Xvfb + noVNC stack if not already up.
+ensure_xvfb() {
+    if [ -S /tmp/.X11-unix/X99 ]; then
+        return 0
+    fi
+
+    echo "Starting noVNC stack..."
     echo "Access the browser at: http://<your-unraid-ip>:6080/vnc.html"
 
     mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
@@ -42,7 +45,10 @@ run_auth() {
     fluxbox >/tmp/fluxbox.log 2>&1 &
     x11vnc -display :99 -nopw -forever -shared -rfbport 5900 >/tmp/x11vnc.log 2>&1 &
     websockify --web /usr/share/novnc 6080 localhost:5900 >/tmp/websockify.log 2>&1 &
+}
 
+run_auth() {
+    ensure_xvfb
     gxodus auth "$CONFIG_ARG" "$CONFIG_VAL"
 }
 
@@ -55,32 +61,64 @@ build_export_args() {
     echo "$ARGS"
 }
 
-if [ "$COMMAND" = "auth" ]; then
-    run_auth
-
-elif [ "$COMMAND" = "export" ]; then
-    # Auto-auth if no session exists
+# Run a single export, including auto-auth if no session exists.
+# Returns the exit code of `gxodus export`.
+run_export_once() {
     if [ ! -f "$SESSION_FILE" ]; then
         echo "No session found. Starting authentication first..."
-        echo "After logging in via noVNC, the export will continue automatically."
         run_auth
-        echo ""
-        echo "Authentication complete. Starting export..."
     fi
 
     EXPORT_ARGS=$(build_export_args)
-
+    set +e
     if [ -n "$GXODUS_REMOTE_CHROME" ]; then
-        exec gxodus export --output "${GXODUS_OUTPUT_DIR:-/exports}" --remote-chrome "$GXODUS_REMOTE_CHROME" "$CONFIG_ARG" "$CONFIG_VAL" $EXPORT_ARGS
+        gxodus export --output "${GXODUS_OUTPUT_DIR:-/exports}" --remote-chrome "$GXODUS_REMOTE_CHROME" "$CONFIG_ARG" "$CONFIG_VAL" $EXPORT_ARGS
     else
-        exec gxodus export --output "${GXODUS_OUTPUT_DIR:-/exports}" "$CONFIG_ARG" "$CONFIG_VAL" $EXPORT_ARGS
+        gxodus export --output "${GXODUS_OUTPUT_DIR:-/exports}" "$CONFIG_ARG" "$CONFIG_VAL" $EXPORT_ARGS
     fi
+    EXIT=$?
+    set -e
+    return $EXIT
+}
+
+if [ "$COMMAND" = "auth" ]; then
+    run_auth
+    exit 0
 
 elif [ "$COMMAND" = "status" ]; then
     if [ -n "$GXODUS_REMOTE_CHROME" ]; then
         exec gxodus status --remote-chrome "$GXODUS_REMOTE_CHROME" "$CONFIG_ARG" "$CONFIG_VAL"
     else
         exec gxodus status "$CONFIG_ARG" "$CONFIG_VAL"
+    fi
+
+elif [ "$COMMAND" = "export" ]; then
+    if [ -n "$GXODUS_INTERVAL" ]; then
+        # Long-running scheduled mode: export every $GXODUS_INTERVAL forever.
+        # Pre-start Xvfb so noVNC re-auth is reachable at any time without
+        # racing with whichever cycle needs it.
+        ensure_xvfb
+
+        while true; do
+            run_export_once
+            EXIT=$?
+
+            if [ $EXIT -eq 1 ]; then
+                # gxodus export exits 1 on auth failure (notify hook fires).
+                # Wipe session so next cycle re-auths via noVNC.
+                echo "Auth expired or failed. Wiping session — next cycle will re-auth via noVNC."
+                rm -f "$SESSION_FILE"
+            elif [ $EXIT -ne 0 ]; then
+                echo "Export failed with exit $EXIT — will retry next cycle."
+            fi
+
+            echo "Sleeping for $GXODUS_INTERVAL until next export..."
+            sleep "$GXODUS_INTERVAL"
+        done
+    else
+        # One-shot mode (default): run once and exit.
+        run_export_once
+        exit $?
     fi
 
 else
