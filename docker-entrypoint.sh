@@ -52,6 +52,10 @@ run_auth() {
     gxodus auth "$CONFIG_ARG" "$CONFIG_VAL"
 }
 
+# Xvfb is needed for non-interactive export too — chromium runs non-headless
+# on display :99 to share the same fingerprint as the auth chromium.
+ensure_xvfb
+
 build_export_args() {
     ARGS=""
     [ -n "$GXODUS_FILE_SIZE" ] && ARGS="$ARGS --file-size $GXODUS_FILE_SIZE"

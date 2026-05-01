@@ -28,7 +28,7 @@ var statusCmd = &cobra.Command{
 		}
 
 		browserCtx, cancel, err := browser.NewContext(ctx, browser.Options{
-			Headless:  true,
+			Headless:  false,
 			RemoteURL: remoteChrome,
 		})
 		if err != nil {

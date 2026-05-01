@@ -77,9 +77,11 @@ var exportCmd = &cobra.Command{
 		//  If the session is genuinely expired, InitiateExport below will
 		//  detect the redirect and fire the same auth_expired notification.)
 
-		// Create browser context for export
+		// Create browser context for export. Non-headless on the existing Xvfb
+		// display so the export chromium has the same fingerprint as the auth
+		// chromium that produced the cookies (Google trusts that fingerprint).
 		browserCtx, cancel, err := browser.NewContext(ctx, browser.Options{
-			Headless:  true,
+			Headless:  false,
 			RemoteURL: remoteChrome,
 		})
 		if err != nil {

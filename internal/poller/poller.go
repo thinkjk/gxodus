@@ -86,7 +86,7 @@ func Poll(ctx context.Context, cfg Config) (*Result, error) {
 
 func checkOnce(ctx context.Context, cfg Config) (*browser.ExportStatus, error) {
 	browserCtx, cancel, err := browser.NewContext(ctx, browser.Options{
-		Headless:  true,
+		Headless:  false,
 		RemoteURL: cfg.RemoteURL,
 	})
 	if err != nil {
