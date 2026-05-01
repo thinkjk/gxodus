@@ -96,6 +96,7 @@ var exportCmd = &cobra.Command{
 			FileSize: cfg.FileSize,
 		})
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "InitiateExport failed: %v\n", err)
 			notify.Fire(cfg.Notify, "error", notify.EventData{Error: err.Error()})
 			if err.Error() == "session expired: redirected to login page" {
 				notify.Fire(cfg.Notify, "auth_expired", notify.EventData{Error: err.Error()})
@@ -119,6 +120,7 @@ var exportCmd = &cobra.Command{
 			Cookies:   cookies,
 		})
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "Poll failed: %v\n", err)
 			notify.Fire(cfg.Notify, "error", notify.EventData{Error: err.Error()})
 			os.Exit(3)
 		}
@@ -127,6 +129,7 @@ var exportCmd = &cobra.Command{
 		resolvedOutput := cfg.ResolveOutputDir()
 		dlResult, err := downloader.Download(pollResult.DownloadURLs, resolvedOutput)
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "Download failed: %v\n", err)
 			notify.Fire(cfg.Notify, "error", notify.EventData{Error: err.Error()})
 			os.Exit(3)
 		}
