@@ -104,6 +104,7 @@ func InjectCookies(ctx context.Context, cookies []*http.Cookie) error {
 			return fmt.Errorf("setting cookie %s: %w", c.Name, err)
 		}
 	}
+	fmt.Printf("[diag] Injected %d cookies into browser.\n", len(cookies))
 	return nil
 }
 

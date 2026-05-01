@@ -3,11 +3,13 @@ package browser
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/chromedp"
+	"github.com/thinkjk/gxodus/internal/config"
 )
 
 const (
@@ -32,52 +34,61 @@ func InitiateExport(ctx context.Context, opts ExportOptions) (*ExportResult, err
 		return nil, wrapErr(ctx, "navigating to takeout", err)
 	}
 
-	// Wait for page to load
 	if err := chromedp.Run(ctx, chromedp.Sleep(3*time.Second)); err != nil {
 		return nil, wrapErr(ctx, "waiting for page load", err)
 	}
 
-	// Check if we got redirected to login
+	logPageState(ctx, "after takeout navigate")
+
 	var currentURL string
 	if err := chromedp.Run(ctx, chromedp.Location(&currentURL)); err != nil {
 		return nil, wrapErr(ctx, "checking URL", err)
 	}
-
 	if strings.Contains(currentURL, "accounts.google.com") {
 		return nil, fmt.Errorf("session expired: redirected to login page")
 	}
 
 	fmt.Println("On Takeout page. Configuring export...")
 
-	// Scroll to bottom to find the "Next step" button
-	// Google Takeout has a list of services then a "Next step" button
 	if err := scrollAndClickNextStep(ctx); err != nil {
 		return nil, wrapErr(ctx, "clicking next step", err)
 	}
 
+	logPageState(ctx, "after next-step click")
+
 	fmt.Println("Configuring export options...")
 
-	// On the export options page, configure:
-	// - Delivery method: typically "Send download link via email" is default
-	// - Frequency: "Export once"
-	// - File type: ZIP
-	// - File size: 2GB
 	if err := configureExportOptions(ctx, opts.FileSize); err != nil {
 		return nil, wrapErr(ctx, "configuring export options", err)
 	}
 
 	fmt.Println("Creating export...")
 
-	// Click "Create export" button
 	if err := clickCreateExport(ctx); err != nil {
 		return nil, wrapErr(ctx, "creating export", err)
 	}
+
+	logPageState(ctx, "after create-export click")
 
 	fmt.Println("Export initiated successfully!")
 
 	return &ExportResult{
 		Started: time.Now(),
 	}, nil
+}
+
+// logPageState prints the current URL and page title for debugging. Best-effort:
+// chromedp errors are swallowed so we never derail the actual flow over diagnostics.
+func logPageState(ctx context.Context, label string) {
+	dctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var url, title string
+	_ = chromedp.Run(dctx,
+		chromedp.Location(&url),
+		chromedp.Title(&title),
+	)
+	fmt.Printf("[diag] %s: url=%q title=%q\n", label, url, title)
 }
 
 // CheckExportStatus navigates to the downloads page and checks export status.
@@ -161,7 +172,6 @@ func CheckExportStatus(ctx context.Context) (*ExportStatus, error) {
 }
 
 func scrollAndClickNextStep(ctx context.Context) error {
-	// Scroll to bottom of the page where the "Next step" button typically is
 	if err := chromedp.Run(ctx,
 		chromedp.Evaluate(`window.scrollTo(0, document.body.scrollHeight)`, nil),
 		chromedp.Sleep(1*time.Second),
@@ -169,7 +179,6 @@ func scrollAndClickNextStep(ctx context.Context) error {
 		return err
 	}
 
-	// Try various selectors for the "Next step" button
 	selectors := []string{
 		`button[aria-label="Next step"]`,
 		`//button[contains(text(), "Next step")]`,
@@ -185,15 +194,17 @@ func scrollAndClickNextStep(ctx context.Context) error {
 		}
 		err := chromedp.Run(ctx, chromedp.Nodes(sel, &nodes, queryOpt, chromedp.AtLeast(0)))
 		if err == nil && len(nodes) > 0 {
+			fmt.Printf("[diag] next-step button matched selector %q (%d nodes)\n", sel, len(nodes))
 			return chromedp.Run(ctx,
 				chromedp.Click(sel, queryOpt),
 				chromedp.Sleep(2*time.Second),
 			)
 		}
+		fmt.Printf("[diag] next-step selector %q: 0 matches\n", sel)
 	}
 
-	_ = Screenshot(ctx, "next-step-not-found")
-	return fmt.Errorf("could not find 'Next step' button — Google may have changed the Takeout UI")
+	logPageState(ctx, "next-step-not-found")
+	return fmt.Errorf("could not find 'Next step' button — Google may have changed the Takeout UI (see screenshot in $CFG/debug)")
 }
 
 func configureExportOptions(ctx context.Context, fileSize string) error {
@@ -263,6 +274,8 @@ func configureExportOptions(ctx context.Context, fileSize string) error {
 }
 
 func clickCreateExport(ctx context.Context) error {
+	logPageState(ctx, "before create-export search")
+
 	selectors := []string{
 		`button[aria-label="Create export"]`,
 		`//button[contains(text(), "Create export")]`,
@@ -277,18 +290,26 @@ func clickCreateExport(ctx context.Context) error {
 		}
 		err := chromedp.Run(ctx, chromedp.Nodes(sel, &nodes, queryOpt, chromedp.AtLeast(0)))
 		if err == nil && len(nodes) > 0 {
+			fmt.Printf("[diag] create-export button matched selector %q (%d nodes)\n", sel, len(nodes))
 			return chromedp.Run(ctx,
 				chromedp.Click(sel, queryOpt),
 				chromedp.Sleep(3*time.Second),
 			)
 		}
+		fmt.Printf("[diag] create-export selector %q: 0 matches (err=%v)\n", sel, err)
 	}
 
-	_ = Screenshot(ctx, "create-export-not-found")
-	return fmt.Errorf("could not find 'Create export' button — Google may have changed the Takeout UI")
+	logPageState(ctx, "create-export-not-found")
+	return fmt.Errorf("could not find 'Create export' button — Google may have changed the Takeout UI (see screenshot in $CFG/debug)")
 }
 
 func wrapErr(ctx context.Context, step string, err error) error {
-	_ = Screenshot(ctx, "error-"+strings.ReplaceAll(step, " ", "-"))
+	name := "error-" + strings.ReplaceAll(step, " ", "-")
+	if shotErr := Screenshot(ctx, name); shotErr != nil {
+		fmt.Fprintf(os.Stderr, "[diag] could not save screenshot %q: %v\n", name, shotErr)
+	} else {
+		fmt.Fprintf(os.Stderr, "[diag] screenshot saved as %s-*.png in %s/debug\n", name, config.ConfigDir())
+	}
+	logPageState(ctx, "wrapErr/"+step)
 	return fmt.Errorf("%s: %w", step, err)
 }
