@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/storage"
 	"github.com/chromedp/chromedp"
 	"github.com/thinkjk/gxodus/internal/config"
 )
@@ -100,20 +102,28 @@ func InjectCookies(ctx context.Context, cookies []*http.Cookie) error {
 	return nil
 }
 
-// ExtractCookies gets all cookies for Google domains from the browser.
+// ExtractCookies gets all browser cookies. Uses Storage.getCookies (browser-
+// wide) rather than Network.getCookies (current-page only) because when chromedp
+// attaches via NewRemoteAllocator it lands on a fresh blank tab whose "current
+// URL" is about:blank, which would return no cookies.
 func ExtractCookies(ctx context.Context) ([]*http.Cookie, error) {
 	var cdpCookies []*network.Cookie
 	err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
 		var err error
-		cdpCookies, err = network.GetCookies().Do(ctx)
+		cdpCookies, err = storage.GetCookies().Do(ctx)
 		return err
 	}))
 	if err != nil {
 		return nil, fmt.Errorf("getting cookies: %w", err)
 	}
 
+	var googleCookies, total int
 	var cookies []*http.Cookie
 	for _, c := range cdpCookies {
+		total++
+		if strings.Contains(c.Domain, "google.com") {
+			googleCookies++
+		}
 		cookies = append(cookies, &http.Cookie{
 			Name:     c.Name,
 			Value:    c.Value,
@@ -123,6 +133,7 @@ func ExtractCookies(ctx context.Context) ([]*http.Cookie, error) {
 			HttpOnly: c.HTTPOnly,
 		})
 	}
+	fmt.Printf("Extracted %d cookies (%d google.com).\n", total, googleCookies)
 
 	return cookies, nil
 }
