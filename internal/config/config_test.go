@@ -90,3 +90,17 @@ func TestResolveOutputDir(t *testing.T) {
 		t.Errorf("expected /absolute/path, got %s", cfg.ResolveOutputDir())
 	}
 }
+
+func TestConfigDirEnvPrecedence(t *testing.T) {
+	t.Setenv("GXODUS_CONFIG_DIR", "/explicit/gxodus")
+	t.Setenv("XDG_CONFIG_HOME", "/should/be/ignored")
+	if got := ConfigDir(); got != "/explicit/gxodus" {
+		t.Errorf("GXODUS_CONFIG_DIR should win: got %s", got)
+	}
+
+	t.Setenv("GXODUS_CONFIG_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", "/xdg")
+	if got := ConfigDir(); got != "/xdg/gxodus" {
+		t.Errorf("XDG_CONFIG_HOME should be used: got %s", got)
+	}
+}

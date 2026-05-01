@@ -36,6 +36,9 @@ func DefaultConfig() *Config {
 }
 
 func ConfigDir() string {
+	if dir := os.Getenv("GXODUS_CONFIG_DIR"); dir != "" {
+		return dir
+	}
 	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
 		return filepath.Join(dir, "gxodus")
 	}
