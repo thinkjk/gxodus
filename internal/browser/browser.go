@@ -36,6 +36,8 @@ func newLocalContext(ctx context.Context, opts Options) (context.Context, contex
 		chromedp.DisableGPU,
 		chromedp.NoSandbox,
 		chromedp.Flag("disable-dev-shm-usage", true),
+		chromedp.Flag("enable-automation", false),
+		chromedp.Flag("disable-blink-features", "AutomationControlled"),
 	}
 
 	// Use CHROME_PATH env var if set (for Docker with Chromium)
