@@ -67,15 +67,15 @@ var exportCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Validate session
-		valid, err := browser.CheckSession(ctx, cookies, remoteChrome)
-		if err != nil || !valid {
-			notify.Fire(cfg.Notify, "auth_expired", notify.EventData{
-				Error: "session expired",
-			})
-			fmt.Fprintln(os.Stderr, "Session has expired. Run 'gxodus auth' to log in again.")
-			os.Exit(1)
-		}
+		fmt.Printf("Loaded %d cookies from saved session.\n", len(cookies))
+
+		// (No pre-flight CheckSession: it duplicated the redirect-to-login
+		//  detection that InitiateExport already does on takeout.google.com,
+		//  and routing it through a remote browserless tripped Google's bot
+		//  detection on myaccount.google.com — causing false "session
+		//  expired" failures with valid cookies, and a re-auth loop.
+		//  If the session is genuinely expired, InitiateExport below will
+		//  detect the redirect and fire the same auth_expired notification.)
 
 		// Create browser context for export
 		browserCtx, cancel, err := browser.NewContext(ctx, browser.Options{
