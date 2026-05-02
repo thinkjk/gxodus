@@ -31,7 +31,7 @@ type Config struct {
 func DefaultConfig() *Config {
 	return &Config{
 		OutputDir:    filepath.Join(homeDir(), "gxodus-exports"),
-		PollInterval: "5m",
+		PollInterval: "1h",
 		Extract:      false,
 		KeepZip:      true,
 		FileSize:     "2GB",

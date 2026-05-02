@@ -9,8 +9,8 @@ import (
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
-	if cfg.PollInterval != "5m" {
-		t.Errorf("expected poll interval 5m, got %s", cfg.PollInterval)
+	if cfg.PollInterval != "1h" {
+		t.Errorf("expected poll interval 1h, got %s", cfg.PollInterval)
 	}
 	if cfg.Extract != false {
 		t.Errorf("expected extract false, got %v", cfg.Extract)
@@ -28,7 +28,7 @@ func TestLoadMissingConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error for missing config, got %v", err)
 	}
-	if cfg.PollInterval != "5m" {
+	if cfg.PollInterval != "1h" {
 		t.Errorf("expected default poll interval, got %s", cfg.PollInterval)
 	}
 }
@@ -79,8 +79,8 @@ func TestPollDuration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if d.Minutes() != 5 {
-		t.Errorf("expected 5 minutes, got %v", d)
+	if d.Hours() != 1 {
+		t.Errorf("expected 1 hour, got %v", d)
 	}
 }
 
