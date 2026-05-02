@@ -15,11 +15,14 @@ import (
 )
 
 var (
-	outputDir    string
-	extract      bool
-	noKeepZip    bool
-	pollInterval string
-	fileSize     string
+	outputDir      string
+	extract        bool
+	noKeepZip      bool
+	pollInterval   string
+	fileSize       string
+	fileType       string
+	frequency      string
+	noActivityLogs bool
 )
 
 var exportCmd = &cobra.Command{
@@ -49,6 +52,15 @@ var exportCmd = &cobra.Command{
 		}
 		if fileSize != "" {
 			cfg.FileSize = fileSize
+		}
+		if fileType != "" {
+			cfg.FileType = fileType
+		}
+		if frequency != "" {
+			cfg.Frequency = frequency
+		}
+		if noActivityLogs {
+			cfg.ActivityLogs = false
 		}
 
 		// Check for saved session
@@ -170,6 +182,9 @@ func init() {
 	exportCmd.Flags().BoolVar(&noKeepZip, "no-keep-zip", false, "remove ZIP files after extraction (requires --extract)")
 	exportCmd.Flags().StringVar(&pollInterval, "poll-interval", "", "poll interval for checking export status (e.g., 5m, 10m)")
 	exportCmd.Flags().StringVar(&fileSize, "file-size", "", "archive split size (1GB, 2GB, 4GB, 10GB, 50GB)")
+	exportCmd.Flags().StringVar(&fileType, "file-type", "", "archive type (zip, tgz)")
+	exportCmd.Flags().StringVar(&frequency, "frequency", "", "export frequency (once, every_2_months)")
+	exportCmd.Flags().BoolVar(&noActivityLogs, "no-activity-logs", false, "skip the Access Log Activity item (off by default in Google UI; gxodus selects it by default)")
 	rootCmd.AddCommand(exportCmd)
 }
 
