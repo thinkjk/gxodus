@@ -317,32 +317,99 @@ func configureExportOptions(ctx context.Context, fileSize string) error {
 func clickCreateExport(ctx context.Context) error {
 	logPageState(ctx, "before create-export search")
 
+	// Scroll to bottom in case the button is below the fold on this page.
+	_ = chromedp.Run(ctx,
+		chromedp.Evaluate(`window.scrollTo(0, document.body.scrollHeight)`, nil),
+		chromedp.Sleep(1*time.Second),
+	)
+
+	// Google Takeout's "Create export" is a Material Design button: the visible
+	// text lives in <span jsname="V67aGc">Create export</span> wrapped in a
+	// clickable button-role ancestor. Try the most specific matches first.
 	selectors := []string{
-		`button[aria-label="Create export"]`,
-		`//button[contains(text(), "Create export")]`,
-		`//button[contains(text(), "Create")]`,
+		`//span[@jsname="V67aGc"]/ancestor::button[1]`,
+		`//span[@jsname="V67aGc"]/ancestor::*[@role="button"][1]`,
+		`//button[.//span[normalize-space(text())="Create export"]]`,
+		`//*[@role="button"][.//span[normalize-space(text())="Create export"]]`,
+		`//span[@jsname="V67aGc"]`, // last resort: click the span itself, hoping the event bubbles
 	}
 
 	for _, sel := range selectors {
 		var nodes []*cdp.Node
-		queryOpt := chromedp.ByQuery
-		if strings.HasPrefix(sel, "//") {
-			queryOpt = chromedp.BySearch
-		}
-		err := chromedp.Run(ctx, chromedp.Nodes(sel, &nodes, queryOpt, chromedp.AtLeast(0)))
+		err := chromedp.Run(ctx, chromedp.Nodes(sel, &nodes, chromedp.BySearch, chromedp.AtLeast(0)))
 		if err == nil && len(nodes) > 0 {
-			fmt.Printf("[diag] create-export button matched selector %q (%d nodes)\n", sel, len(nodes))
+			fmt.Printf("[diag] create-export matched selector %q (%d nodes)\n", sel, len(nodes))
 			return chromedp.Run(ctx,
-				chromedp.Click(sel, queryOpt),
+				chromedp.Click(sel, chromedp.BySearch),
 				chromedp.Sleep(3*time.Second),
 			)
 		}
 		fmt.Printf("[diag] create-export selector %q: 0 matches (err=%v)\n", sel, err)
 	}
 
+	// Last-resort JS click: walk up from the span to the nearest clickable
+	// ancestor and call .click() directly. Bypasses chromedp's coordinate-based
+	// click in case the element is offscreen or covered.
+	var jsClicked bool
+	jsErr := chromedp.Run(ctx, chromedp.Evaluate(`
+		(() => {
+			const span = document.querySelector('span[jsname="V67aGc"]');
+			if (!span) return false;
+			const target = span.closest('button, [role="button"]') || span.parentElement;
+			if (!target) return false;
+			target.scrollIntoView({block: 'center'});
+			target.click();
+			return true;
+		})()
+	`, &jsClicked))
+	if jsErr == nil && jsClicked {
+		fmt.Println("[diag] create-export clicked via JS .click() fallback")
+		return chromedp.Run(ctx, chromedp.Sleep(3*time.Second))
+	}
+	fmt.Printf("[diag] create-export JS fallback failed: err=%v clicked=%v\n", jsErr, jsClicked)
+
 	logPageState(ctx, "create-export-not-found")
 	dumpButtons(ctx, "create-export-not-found")
 	return fmt.Errorf("could not find 'Create export' button — Google may have changed the Takeout UI (see screenshot in $CFG/debug)")
+}
+
+func fileTypeDisplayText(v string) (string, error) {
+	switch v {
+	case "", "zip":
+		return ".zip", nil
+	case "tgz":
+		return ".tgz", nil
+	default:
+		return "", fmt.Errorf("unknown file_type %q (use zip|tgz)", v)
+	}
+}
+
+func fileSizeDisplayText(v string) (string, error) {
+	switch v {
+	case "", "2GB":
+		return "2 GB", nil
+	case "1GB":
+		return "1 GB", nil
+	case "4GB":
+		return "4 GB", nil
+	case "10GB":
+		return "10 GB", nil
+	case "50GB":
+		return "50 GB", nil
+	default:
+		return "", fmt.Errorf("unknown file_size %q (use 1GB|2GB|4GB|10GB|50GB)", v)
+	}
+}
+
+func frequencyRadioValue(v string) (string, error) {
+	switch v {
+	case "", "once":
+		return "1", nil
+	case "every_2_months":
+		return "2", nil
+	default:
+		return "", fmt.Errorf("unknown frequency %q (use once|every_2_months)", v)
+	}
 }
 
 func wrapErr(ctx context.Context, step string, err error) error {
