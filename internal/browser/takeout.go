@@ -317,56 +317,35 @@ func configureExportOptions(ctx context.Context, fileSize string) error {
 func clickCreateExport(ctx context.Context) error {
 	logPageState(ctx, "before create-export search")
 
-	// Scroll to bottom in case the button is below the fold on this page.
 	_ = chromedp.Run(ctx,
 		chromedp.Evaluate(`window.scrollTo(0, document.body.scrollHeight)`, nil),
-		chromedp.Sleep(1*time.Second),
+		chromedp.Sleep(500*time.Millisecond),
 	)
 
-	// Google Takeout's "Create export" is a Material Design button: the visible
-	// text lives in <span jsname="V67aGc">Create export</span> wrapped in a
-	// clickable button-role ancestor. Try the most specific matches first.
+	// Confirmed via DOM dump 2026-05-01: button has no aria-label, text "Create
+	// export" is directly in the <button> (no nested span jsname). Class prefix
+	// UywwFc- is unique to this button on the options page.
 	selectors := []string{
-		`//span[@jsname="V67aGc"]/ancestor::button[1]`,
-		`//span[@jsname="V67aGc"]/ancestor::*[@role="button"][1]`,
-		`//button[.//span[normalize-space(text())="Create export"]]`,
-		`//*[@role="button"][.//span[normalize-space(text())="Create export"]]`,
-		`//span[@jsname="V67aGc"]`, // last resort: click the span itself, hoping the event bubbles
+		`//button[normalize-space(.)="Create export"]`,
+		`button.UywwFc-LgbsSe`,
 	}
 
 	for _, sel := range selectors {
 		var nodes []*cdp.Node
-		err := chromedp.Run(ctx, chromedp.Nodes(sel, &nodes, chromedp.BySearch, chromedp.AtLeast(0)))
+		queryOpt := chromedp.ByQuery
+		if strings.HasPrefix(sel, "//") {
+			queryOpt = chromedp.BySearch
+		}
+		err := chromedp.Run(ctx, chromedp.Nodes(sel, &nodes, queryOpt, chromedp.AtLeast(0)))
 		if err == nil && len(nodes) > 0 {
 			fmt.Printf("[diag] create-export matched selector %q (%d nodes)\n", sel, len(nodes))
 			return chromedp.Run(ctx,
-				chromedp.Click(sel, chromedp.BySearch),
+				chromedp.Click(sel, queryOpt),
 				chromedp.Sleep(3*time.Second),
 			)
 		}
 		fmt.Printf("[diag] create-export selector %q: 0 matches (err=%v)\n", sel, err)
 	}
-
-	// Last-resort JS click: walk up from the span to the nearest clickable
-	// ancestor and call .click() directly. Bypasses chromedp's coordinate-based
-	// click in case the element is offscreen or covered.
-	var jsClicked bool
-	jsErr := chromedp.Run(ctx, chromedp.Evaluate(`
-		(() => {
-			const span = document.querySelector('span[jsname="V67aGc"]');
-			if (!span) return false;
-			const target = span.closest('button, [role="button"]') || span.parentElement;
-			if (!target) return false;
-			target.scrollIntoView({block: 'center'});
-			target.click();
-			return true;
-		})()
-	`, &jsClicked))
-	if jsErr == nil && jsClicked {
-		fmt.Println("[diag] create-export clicked via JS .click() fallback")
-		return chromedp.Run(ctx, chromedp.Sleep(3*time.Second))
-	}
-	fmt.Printf("[diag] create-export JS fallback failed: err=%v clicked=%v\n", jsErr, jsClicked)
 
 	logPageState(ctx, "create-export-not-found")
 	dumpButtons(ctx, "create-export-not-found")
