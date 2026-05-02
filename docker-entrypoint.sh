@@ -45,6 +45,10 @@ ensure_xvfb() {
     fluxbox >/tmp/fluxbox.log 2>&1 &
     x11vnc -display :99 -nopw -forever -shared -rfbport 5900 >/tmp/x11vnc.log 2>&1 &
     websockify --web /usr/share/novnc 6080 localhost:5900 >/tmp/websockify.log 2>&1 &
+
+    # fluxbox spawns fbsetbg which shows an xmessage "no wallpaper-setting
+    # program found" popup on first run. Kill it before the user sees it.
+    (sleep 2; pkill -f "xmessage" 2>/dev/null; true) &
 }
 
 run_auth() {
