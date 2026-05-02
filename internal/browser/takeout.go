@@ -422,3 +422,32 @@ func wrapErr(ctx context.Context, step string, err error) error {
 	logPageState(ctx, "wrapErr/"+step)
 	return fmt.Errorf("%s: %w", step, err)
 }
+
+// selectActivityLog ticks the "Access Log Activity" checkbox on the Takeout
+// data-selection page. Idempotent: no-op if already checked. Confirmed via DOM
+// dump 2026-05-01 — the input is the only element with this exact aria-label.
+func selectActivityLog(ctx context.Context) error {
+	const sel = `input[aria-label="Select Access Log Activity"]`
+	const checkScript = `(() => {
+		const el = document.querySelector('input[aria-label="Select Access Log Activity"]');
+		return el ? el.checked : null;
+	})()`
+
+	var checked any
+	if err := chromedp.Run(ctx, chromedp.Evaluate(checkScript, &checked)); err != nil {
+		return fmt.Errorf("checking access log activity state: %w", err)
+	}
+	if checked == nil {
+		return fmt.Errorf("access log activity checkbox not found on page")
+	}
+	if b, ok := checked.(bool); ok && b {
+		fmt.Println("[diag] Access Log Activity already selected")
+		return nil
+	}
+
+	fmt.Println("[diag] selecting Access Log Activity (off by default)")
+	return chromedp.Run(ctx,
+		chromedp.Click(sel, chromedp.ByQuery),
+		chromedp.Sleep(500*time.Millisecond),
+	)
+}
