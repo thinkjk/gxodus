@@ -108,15 +108,20 @@ elif [ "$COMMAND" = "export" ]; then
         ensure_xvfb
 
         while true; do
-            run_export_once
-            EXIT=$?
+            # Use if/else so a non-zero return from run_export_once doesn't
+            # trip set -e and kill the entire loop.
+            if run_export_once; then
+                EXIT=0
+            else
+                EXIT=$?
+            fi
 
-            if [ $EXIT -eq 1 ]; then
+            if [ "$EXIT" -eq 1 ]; then
                 # gxodus export exits 1 on auth failure (notify hook fires).
                 # Wipe session so next cycle re-auths via noVNC.
                 echo "Auth expired or failed. Wiping session — next cycle will re-auth via noVNC."
                 rm -f "$SESSION_FILE"
-            elif [ $EXIT -ne 0 ]; then
+            elif [ "$EXIT" -ne 0 ]; then
                 echo "Export failed with exit $EXIT — will retry next cycle."
             fi
 
@@ -125,8 +130,11 @@ elif [ "$COMMAND" = "export" ]; then
         done
     else
         # One-shot mode (default): run once and exit.
-        run_export_once
-        exit $?
+        if run_export_once; then
+            exit 0
+        else
+            exit $?
+        fi
     fi
 
 else

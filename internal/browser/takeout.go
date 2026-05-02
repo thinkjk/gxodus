@@ -91,6 +91,46 @@ func logPageState(ctx context.Context, label string) {
 	fmt.Printf("[diag] %s: url=%q title=%q\n", label, url, title)
 }
 
+// dumpButtons enumerates every clickable element on the page along with its
+// text, aria-label, and role. Use when a selector miss leaves us blind to what
+// Google actually rendered.
+func dumpButtons(ctx context.Context, label string) {
+	dctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	const script = `
+		(() => {
+			const out = [];
+			const seen = new Set();
+			const sels = ['button', '[role="button"]', 'a[role="button"]', 'div[role="button"]', '[jsname]'];
+			for (const sel of sels) {
+				for (const el of document.querySelectorAll(sel)) {
+					if (seen.has(el)) continue;
+					seen.add(el);
+					const r = el.getBoundingClientRect();
+					if (r.width === 0 && r.height === 0) continue;
+					out.push({
+						tag: el.tagName.toLowerCase(),
+						text: (el.innerText || el.textContent || '').trim().slice(0, 80),
+						aria: el.getAttribute('aria-label') || '',
+						role: el.getAttribute('role') || '',
+						jsname: el.getAttribute('jsname') || '',
+						id: el.id || '',
+						cls: (el.className || '').toString().slice(0, 60),
+					});
+				}
+			}
+			return JSON.stringify(out);
+		})()
+	`
+	var result string
+	if err := chromedp.Run(dctx, chromedp.Evaluate(script, &result)); err != nil {
+		fmt.Printf("[diag] %s: button enumeration failed: %v\n", label, err)
+		return
+	}
+	fmt.Printf("[diag] %s: visible-buttons-json=%s\n", label, result)
+}
+
 // CheckExportStatus navigates to the downloads page and checks export status.
 type ExportStatus struct {
 	State        string   // "in_progress", "complete", "failed"
@@ -204,6 +244,7 @@ func scrollAndClickNextStep(ctx context.Context) error {
 	}
 
 	logPageState(ctx, "next-step-not-found")
+	dumpButtons(ctx, "next-step-not-found")
 	return fmt.Errorf("could not find 'Next step' button — Google may have changed the Takeout UI (see screenshot in $CFG/debug)")
 }
 
@@ -300,6 +341,7 @@ func clickCreateExport(ctx context.Context) error {
 	}
 
 	logPageState(ctx, "create-export-not-found")
+	dumpButtons(ctx, "create-export-not-found")
 	return fmt.Errorf("could not find 'Create export' button — Google may have changed the Takeout UI (see screenshot in $CFG/debug)")
 }
 
