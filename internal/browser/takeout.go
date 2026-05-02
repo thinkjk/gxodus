@@ -451,3 +451,57 @@ func selectActivityLog(ctx context.Context) error {
 		chromedp.Sleep(500*time.Millisecond),
 	)
 }
+
+// selectComboboxOption opens a Material Design combobox and clicks the option
+// matching optionText. Confirmed via DOM dump 2026-05-01 — Takeout's option
+// elements use role="option" with the visible text as innerText.
+func selectComboboxOption(ctx context.Context, comboSelector, optionText string) error {
+	if err := chromedp.Run(ctx,
+		chromedp.Click(comboSelector, chromedp.ByQuery),
+		chromedp.Sleep(500*time.Millisecond),
+	); err != nil {
+		return fmt.Errorf("opening combobox %q: %w", comboSelector, err)
+	}
+
+	optSel := fmt.Sprintf(`//*[@role="option"][normalize-space()=%q]`, optionText)
+	if err := chromedp.Run(ctx,
+		chromedp.Click(optSel, chromedp.BySearch),
+		chromedp.Sleep(500*time.Millisecond),
+	); err != nil {
+		return fmt.Errorf("selecting option %q in %s: %w", optionText, comboSelector, err)
+	}
+	fmt.Printf("[diag] selected %q in combobox %s\n", optionText, comboSelector)
+	return nil
+}
+
+func setFileType(ctx context.Context, value string) error {
+	text, err := fileTypeDisplayText(value)
+	if err != nil {
+		return err
+	}
+	return selectComboboxOption(ctx, `div[role="combobox"][aria-label="File type select"]`, text)
+}
+
+func setFileSize(ctx context.Context, value string) error {
+	text, err := fileSizeDisplayText(value)
+	if err != nil {
+		return err
+	}
+	return selectComboboxOption(ctx, `div[role="combobox"][aria-label="File size select"]`, text)
+}
+
+func setFrequency(ctx context.Context, value string) error {
+	radioVal, err := frequencyRadioValue(value)
+	if err != nil {
+		return err
+	}
+	sel := fmt.Sprintf(`input[type="radio"][name="scheduleoptions"][value="%s"]`, radioVal)
+	if err := chromedp.Run(ctx,
+		chromedp.Click(sel, chromedp.ByQuery),
+		chromedp.Sleep(300*time.Millisecond),
+	); err != nil {
+		return fmt.Errorf("clicking frequency radio %q: %w", radioVal, err)
+	}
+	fmt.Printf("[diag] set frequency radio value=%s (config=%s)\n", radioVal, value)
+	return nil
+}
