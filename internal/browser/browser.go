@@ -22,6 +22,15 @@ type Options struct {
 	UserDataDir  string
 }
 
+// ProfileDir is the persistent chromium user-data-dir, shared by every gxodus
+// chromium spawn (auth, export, poll, status) so Google sees one continuous
+// "trusted device" across processes. Without this, each fresh chromium has a
+// new fingerprint and Google may force re-auth on sensitive pages even when
+// cookies are valid.
+func ProfileDir() string {
+	return filepath.Join(config.ConfigDir(), "chrome-profile")
+}
+
 // NewContext creates a chromedp context with the given options.
 // Returns the context, a cancel function, and any error.
 func NewContext(ctx context.Context, opts Options) (context.Context, context.CancelFunc, error) {

@@ -28,8 +28,9 @@ var statusCmd = &cobra.Command{
 		}
 
 		browserCtx, cancel, err := browser.NewContext(ctx, browser.Options{
-			Headless:  false,
-			RemoteURL: remoteChrome,
+			Headless:    false,
+			RemoteURL:   remoteChrome,
+			UserDataDir: browser.ProfileDir(),
 		})
 		if err != nil {
 			return fmt.Errorf("creating browser: %w", err)

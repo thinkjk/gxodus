@@ -156,21 +156,45 @@ type ExportStatus struct {
 }
 
 func CheckExportStatus(ctx context.Context) (*ExportStatus, error) {
-	if err := chromedp.Run(ctx, chromedp.Navigate(takeoutManageURL)); err != nil {
-		return nil, wrapErr(ctx, "navigating to manage exports", err)
+	// Check the options page first for in-progress status. The manage page
+	// (takeoutManageURL) only shows COMPLETED exports — while an export is
+	// running, Google surfaces "creating a copy" inline on takeout.google.com
+	// itself, not on /takeout/downloads.
+	if err := chromedp.Run(ctx, chromedp.Navigate(takeoutURL)); err != nil {
+		return nil, wrapErr(ctx, "navigating to takeout for in-progress check", err)
 	}
-
-	// Wait for page to load
 	if err := chromedp.Run(ctx, chromedp.Sleep(3*time.Second)); err != nil {
 		return nil, err
 	}
 
-	// Check if redirected to login
 	var currentURL string
 	if err := chromedp.Run(ctx, chromedp.Location(&currentURL)); err != nil {
 		return nil, wrapErr(ctx, "checking URL", err)
 	}
+	if strings.Contains(currentURL, "accounts.google.com") {
+		return nil, fmt.Errorf("session expired: redirected to login page")
+	}
 
+	var optionsBodyText string
+	if err := chromedp.Run(ctx, chromedp.Text("body", &optionsBodyText, chromedp.ByQuery)); err != nil {
+		return nil, wrapErr(ctx, "reading takeout page text", err)
+	}
+	optionsLower := strings.ToLower(optionsBodyText)
+	if strings.Contains(optionsLower, "creating a copy") || strings.Contains(optionsLower, "in progress") {
+		return &ExportStatus{State: "in_progress"}, nil
+	}
+
+	// Not in-progress — check the manage page for completed downloads.
+	if err := chromedp.Run(ctx, chromedp.Navigate(takeoutManageURL)); err != nil {
+		return nil, wrapErr(ctx, "navigating to manage exports", err)
+	}
+	if err := chromedp.Run(ctx, chromedp.Sleep(3*time.Second)); err != nil {
+		return nil, err
+	}
+
+	if err := chromedp.Run(ctx, chromedp.Location(&currentURL)); err != nil {
+		return nil, wrapErr(ctx, "checking URL", err)
+	}
 	if strings.Contains(currentURL, "accounts.google.com") {
 		return nil, fmt.Errorf("session expired: redirected to login page")
 	}

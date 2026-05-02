@@ -92,9 +92,13 @@ var exportCmd = &cobra.Command{
 		// Create browser context for export. Non-headless on the existing Xvfb
 		// display so the export chromium has the same fingerprint as the auth
 		// chromium that produced the cookies (Google trusts that fingerprint).
+		// UserDataDir shares the auth chromium's profile so Google sees the
+		// same persistent device — without this, a fresh chromium per
+		// invocation triggers extra verification on sensitive Takeout pages.
 		browserCtx, cancel, err := browser.NewContext(ctx, browser.Options{
-			Headless:  false,
-			RemoteURL: remoteChrome,
+			Headless:    false,
+			RemoteURL:   remoteChrome,
+			UserDataDir: browser.ProfileDir(),
 		})
 		if err != nil {
 			return fmt.Errorf("creating browser: %w", err)

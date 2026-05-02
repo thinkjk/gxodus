@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/chromedp/chromedp"
-	"github.com/thinkjk/gxodus/internal/config"
 )
 
 const (
@@ -37,7 +36,7 @@ func InteractiveLogin(ctx context.Context, _ string) ([]*http.Cookie, error) {
 		chromePath = "chromium"
 	}
 
-	profileDir := filepath.Join(config.ConfigDir(), "chrome-profile")
+	profileDir := ProfileDir()
 	if err := os.MkdirAll(profileDir, 0700); err != nil {
 		return nil, fmt.Errorf("creating chrome profile dir: %w", err)
 	}
