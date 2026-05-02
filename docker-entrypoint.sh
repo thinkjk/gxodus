@@ -63,6 +63,9 @@ ensure_xvfb
 build_export_args() {
     ARGS=""
     [ -n "$GXODUS_FILE_SIZE" ] && ARGS="$ARGS --file-size $GXODUS_FILE_SIZE"
+    [ -n "$GXODUS_FILE_TYPE" ] && ARGS="$ARGS --file-type $GXODUS_FILE_TYPE"
+    [ -n "$GXODUS_FREQUENCY" ] && ARGS="$ARGS --frequency $GXODUS_FREQUENCY"
+    [ "$GXODUS_NO_ACTIVITY_LOGS" = "true" ] && ARGS="$ARGS --no-activity-logs"
     [ -n "$GXODUS_POLL_INTERVAL" ] && ARGS="$ARGS --poll-interval $GXODUS_POLL_INTERVAL"
     [ "$GXODUS_EXTRACT" = "true" ] && ARGS="$ARGS --extract"
     [ "$GXODUS_NO_KEEP_ZIP" = "true" ] && ARGS="$ARGS --no-keep-zip"
