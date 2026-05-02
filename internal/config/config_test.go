@@ -104,3 +104,16 @@ func TestConfigDirEnvPrecedence(t *testing.T) {
 		t.Errorf("XDG_CONFIG_HOME should be used: got %s", got)
 	}
 }
+
+func TestDefaultConfigExportOptions(t *testing.T) {
+	c := DefaultConfig()
+	if c.FileType != "zip" {
+		t.Errorf("FileType: got %q want %q", c.FileType, "zip")
+	}
+	if c.Frequency != "once" {
+		t.Errorf("Frequency: got %q want %q", c.Frequency, "once")
+	}
+	if !c.ActivityLogs {
+		t.Errorf("ActivityLogs: got false want true")
+	}
+}

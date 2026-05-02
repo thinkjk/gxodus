@@ -17,12 +17,15 @@ type NotifyConfig struct {
 }
 
 type Config struct {
-	OutputDir    string        `toml:"output_dir"`
-	PollInterval string        `toml:"poll_interval"`
-	Extract      bool          `toml:"extract"`
-	KeepZip      bool          `toml:"keep_zip"`
-	FileSize     string        `toml:"file_size"`
-	Notify       NotifyConfig  `toml:"notify"`
+	OutputDir    string       `toml:"output_dir"`
+	PollInterval string       `toml:"poll_interval"`
+	Extract      bool         `toml:"extract"`
+	KeepZip      bool         `toml:"keep_zip"`
+	FileSize     string       `toml:"file_size"`
+	FileType     string       `toml:"file_type"`
+	Frequency    string       `toml:"frequency"`
+	ActivityLogs bool         `toml:"activity_logs"`
+	Notify       NotifyConfig `toml:"notify"`
 }
 
 func DefaultConfig() *Config {
@@ -32,6 +35,9 @@ func DefaultConfig() *Config {
 		Extract:      false,
 		KeepZip:      true,
 		FileSize:     "2GB",
+		FileType:     "zip",
+		Frequency:    "once",
+		ActivityLogs: true,
 	}
 }
 
