@@ -95,7 +95,10 @@ var exportCmd = &cobra.Command{
 
 		// Initiate export
 		_, err = browser.InitiateExport(browserCtx, browser.ExportOptions{
-			FileSize: cfg.FileSize,
+			FileSize:     cfg.FileSize,
+			FileType:     cfg.FileType,
+			Frequency:    cfg.Frequency,
+			ActivityLogs: cfg.ActivityLogs,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "InitiateExport failed: %v\n", err)

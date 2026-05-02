@@ -23,7 +23,10 @@ type ExportResult struct {
 }
 
 type ExportOptions struct {
-	FileSize string // e.g. "1GB", "2GB", "4GB", "10GB", "50GB"
+	FileSize     string // e.g. "1GB", "2GB", "4GB", "10GB", "50GB"
+	FileType     string // "zip" | "tgz"
+	Frequency    string // "once" | "every_2_months"
+	ActivityLogs bool   // include Access Log Activity (off by default in Google UI)
 }
 
 // InitiateExport navigates to Google Takeout and creates a new export.
@@ -48,7 +51,13 @@ func InitiateExport(ctx context.Context, opts ExportOptions) (*ExportResult, err
 		return nil, fmt.Errorf("session expired: redirected to login page")
 	}
 
-	fmt.Println("On Takeout page. Configuring export...")
+	fmt.Println("On Takeout page. Configuring data selection...")
+
+	if opts.ActivityLogs {
+		if err := selectActivityLog(ctx); err != nil {
+			return nil, wrapErr(ctx, "selecting activity logs", err)
+		}
+	}
 
 	if err := scrollAndClickNextStep(ctx); err != nil {
 		return nil, wrapErr(ctx, "clicking next step", err)
@@ -58,8 +67,18 @@ func InitiateExport(ctx context.Context, opts ExportOptions) (*ExportResult, err
 
 	fmt.Println("Configuring export options...")
 
-	if err := configureExportOptions(ctx, opts.FileSize); err != nil {
-		return nil, wrapErr(ctx, "configuring export options", err)
+	if err := chromedp.Run(ctx, chromedp.Sleep(2*time.Second)); err != nil {
+		return nil, wrapErr(ctx, "waiting for options page", err)
+	}
+
+	if err := setFrequency(ctx, opts.Frequency); err != nil {
+		return nil, wrapErr(ctx, "setting frequency", err)
+	}
+	if err := setFileType(ctx, opts.FileType); err != nil {
+		return nil, wrapErr(ctx, "setting file type", err)
+	}
+	if err := setFileSize(ctx, opts.FileSize); err != nil {
+		return nil, wrapErr(ctx, "setting file size", err)
 	}
 
 	fmt.Println("Creating export...")
@@ -69,7 +88,6 @@ func InitiateExport(ctx context.Context, opts ExportOptions) (*ExportResult, err
 	}
 
 	logPageState(ctx, "after create-export click")
-
 	fmt.Println("Export initiated successfully!")
 
 	return &ExportResult{
@@ -248,71 +266,6 @@ func scrollAndClickNextStep(ctx context.Context) error {
 	return fmt.Errorf("could not find 'Next step' button — Google may have changed the Takeout UI (see screenshot in $CFG/debug)")
 }
 
-func configureExportOptions(ctx context.Context, fileSize string) error {
-	// Wait for the options page to load
-	if err := chromedp.Run(ctx, chromedp.Sleep(2*time.Second)); err != nil {
-		return err
-	}
-
-	// Select file size if specified and different from default
-	if fileSize != "" && fileSize != "2GB" {
-		// Google Takeout has a dropdown for file size with options like 1GB, 2GB, 4GB, 10GB, 50GB
-		// Try to find and click the file size dropdown, then select the desired size
-		sizeSelectors := []string{
-			`//span[contains(text(), "GB")]`,
-			`[data-value*="GB"]`,
-		}
-
-		for _, sel := range sizeSelectors {
-			var nodes []*cdp.Node
-			queryOpt := chromedp.ByQuery
-			if strings.HasPrefix(sel, "//") {
-				queryOpt = chromedp.BySearch
-			}
-			err := chromedp.Run(ctx, chromedp.Nodes(sel, &nodes, queryOpt, chromedp.AtLeast(0)))
-			if err == nil && len(nodes) > 0 {
-				// Click the dropdown to open it
-				if err := chromedp.Run(ctx,
-					chromedp.Click(sel, queryOpt),
-					chromedp.Sleep(1*time.Second),
-				); err != nil {
-					continue
-				}
-
-				// Now select the desired size
-				sizeText := fileSize
-				optionSelectors := []string{
-					fmt.Sprintf(`//li[contains(text(), "%s")]`, sizeText),
-					fmt.Sprintf(`//div[contains(text(), "%s")]`, sizeText),
-					fmt.Sprintf(`//option[contains(text(), "%s")]`, sizeText),
-					fmt.Sprintf(`[data-value="%s"]`, sizeText),
-				}
-
-				for _, optSel := range optionSelectors {
-					var optNodes []*cdp.Node
-					optQueryOpt := chromedp.ByQuery
-					if strings.HasPrefix(optSel, "//") {
-						optQueryOpt = chromedp.BySearch
-					}
-					err := chromedp.Run(ctx, chromedp.Nodes(optSel, &optNodes, optQueryOpt, chromedp.AtLeast(0)))
-					if err == nil && len(optNodes) > 0 {
-						chromedp.Run(ctx,
-							chromedp.Click(optSel, optQueryOpt),
-							chromedp.Sleep(1*time.Second),
-						)
-						fmt.Printf("Selected file size: %s\n", fileSize)
-						return nil
-					}
-				}
-				break
-			}
-		}
-
-		fmt.Printf("Warning: could not set file size to %s, using Takeout default\n", fileSize)
-	}
-
-	return nil
-}
 
 func clickCreateExport(ctx context.Context) error {
 	logPageState(ctx, "before create-export search")
