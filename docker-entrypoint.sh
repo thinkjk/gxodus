@@ -17,15 +17,26 @@ echo "gxodus: interval=${GXODUS_INTERVAL:-(not set, one-shot mode)}"
 
 # Idempotent: start Xvfb + noVNC stack if not already up.
 ensure_xvfb() {
-    if [ -S /tmp/.X11-unix/X99 ]; then
+    # Verify the Xvfb PROCESS is alive, not just the socket. docker restart
+    # preserves /tmp (writable layer) but kills processes, leaving an orphan
+    # socket pointing to a dead Xvfb. Without the process check, ensure_xvfb
+    # would short-circuit and chromium would later fail with "Missing X
+    # server or $DISPLAY".
+    if [ -S /tmp/.X11-unix/X99 ] && pgrep -x Xvfb >/dev/null 2>&1; then
         return 0
     fi
 
     echo "Starting noVNC stack..."
     echo "Access the browser at: http://<your-unraid-ip>:6080/vnc.html"
 
+    # Sweep up any orphans from the previous container generation before
+    # starting fresh — same docker-restart caveat as above.
+    pkill -x x11vnc 2>/dev/null || true
+    pkill -x websockify 2>/dev/null || true
+    pkill -x fluxbox 2>/dev/null || true
+
     mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
-    rm -f /tmp/.X99-lock
+    rm -f /tmp/.X11-unix/X99 /tmp/.X99-lock
 
     Xvfb :99 -screen 0 1280x720x24 -ac >/tmp/xvfb.log 2>&1 &
     XVFB_PID=$!
@@ -110,6 +121,11 @@ elif [ "$COMMAND" = "export" ]; then
         # racing with whichever cycle needs it.
         ensure_xvfb
 
+        # After an auth failure, wait this short interval before retrying
+        # instead of the full $GXODUS_INTERVAL — otherwise a single bad
+        # cycle blocks for the entire cadence (e.g. 180 days).
+        AUTH_RETRY_INTERVAL="${GXODUS_AUTH_RETRY:-5m}"
+
         while true; do
             # Use if/else so a non-zero return from run_export_once doesn't
             # trip set -e and kill the entire loop.
@@ -119,17 +135,21 @@ elif [ "$COMMAND" = "export" ]; then
                 EXIT=$?
             fi
 
+            SLEEP_FOR="$GXODUS_INTERVAL"
             if [ "$EXIT" -eq 1 ]; then
                 # gxodus export exits 1 on auth failure (notify hook fires).
-                # Wipe session so next cycle re-auths via noVNC.
+                # Wipe session so next cycle re-auths via noVNC, and use the
+                # short retry interval so the user can recover quickly.
                 echo "Auth expired or failed. Wiping session — next cycle will re-auth via noVNC."
                 rm -f "$SESSION_FILE"
+                SLEEP_FOR="$AUTH_RETRY_INTERVAL"
+                echo "Auth retry: will retry in $SLEEP_FOR (override with GXODUS_AUTH_RETRY) instead of $GXODUS_INTERVAL."
             elif [ "$EXIT" -ne 0 ]; then
                 echo "Export failed with exit $EXIT — will retry next cycle."
             fi
 
-            echo "Sleeping for $GXODUS_INTERVAL until next export..."
-            sleep "$GXODUS_INTERVAL"
+            echo "Sleeping for $SLEEP_FOR until next export..."
+            sleep "$SLEEP_FOR"
         done
     else
         # One-shot mode (default): run once and exit.
