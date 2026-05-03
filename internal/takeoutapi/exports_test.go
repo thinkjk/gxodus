@@ -3,9 +3,11 @@ package takeoutapi
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -82,5 +84,47 @@ func TestClient_GetExport(t *testing.T) {
 	}
 	if missing != nil {
 		t.Error("expected nil for missing UUID")
+	}
+}
+
+func TestClient_CreateExport_PayloadShape(t *testing.T) {
+	var capturedBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" {
+			_, _ = w.Write([]byte(`<html><script>WIZ_global_data = {"SNlM0e":"AT","cfb2h":"BL"};</script></html>`))
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		capturedBody = string(body)
+		// Minimal valid empty response.
+		chunk := `[["wrb.fr","U5lrKc","[\"OK\"]",null,null,null,"generic"]]`
+		_, _ = w.Write([]byte(")]}'\n" + strconv.Itoa(len(chunk)) + "\n" + chunk))
+	}))
+	defer srv.Close()
+
+	c := newClientForTest(srv.URL, []*http.Cookie{{Name: "SID", Value: "fake"}})
+	_, err := c.CreateExport(context.Background(), CreateExportOptions{
+		Products:  []string{"drive", "bond"},
+		Format:    "ZIP",
+		SizeBytes: 2 * 1024 * 1024 * 1024, // 2 GB
+		Frequency: "once",
+	})
+	if err != nil {
+		t.Fatalf("CreateExport: %v", err)
+	}
+
+	// Verify the captured body contains key payload markers.
+	must := []string{
+		`U5lrKc`,
+		`ac.t.st`,
+		`drive`,
+		`bond`,
+		`ZIP`,
+		`2147483648`, // 2 GB in bytes
+	}
+	for _, m := range must {
+		if !strings.Contains(capturedBody, m) {
+			t.Errorf("body missing %q: %s", m, capturedBody)
+		}
 	}
 }
