@@ -36,40 +36,66 @@ func TestEncodeRequest(t *testing.T) {
 	}
 }
 
-func TestDecodeResponse(t *testing.T) {
-	// Build a captured-shape response. Compute chunk lengths dynamically so
-	// they always match the actual JSON byte length.
-	chunk1 := `[["wrb.fr","fhjYTc","[null,\"hello\"]",null,null,null,"generic"]]`
-	chunk2 := `[["di",123],["af.httprm",122,"-8797266961199462245",9]]`
-	chunk3 := `[["e",4,null,null,30387]]`
-
-	body := []byte(")]}'\n" +
-		strconv.Itoa(len(chunk1)) + "\n" + chunk1 + "\n" +
-		strconv.Itoa(len(chunk2)) + "\n" + chunk2 + "\n" +
-		strconv.Itoa(len(chunk3)) + "\n" + chunk3)
+func TestDecodeResponse_RealFormat_NoSeparators(t *testing.T) {
+	// Captured shape from a real fhjYTc response: no newlines between segments.
+	chunk1 := `[["wrb.fr","fhjYTc","[null,\"hello\"]",null,null,null,"generic"],["di",119]]`
+	chunk2 := `[["e",4,null,null,200]]`
+	body := []byte(")]}'" + strconv.Itoa(len(chunk1)) + chunk1 + strconv.Itoa(len(chunk2)) + chunk2)
 
 	results, err := decodeResponse(body)
 	if err != nil {
 		t.Fatalf("decodeResponse: %v", err)
 	}
-
 	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
+		t.Fatalf("expected 1 wrb.fr result, got %d", len(results))
 	}
-
 	if results[0].RpcID != "fhjYTc" {
-		t.Errorf("RpcID = %q, want %q", results[0].RpcID, "fhjYTc")
+		t.Errorf("RpcID = %q", results[0].RpcID)
 	}
-
 	if string(results[0].RawJSON) != `[null,"hello"]` {
-		t.Errorf("RawJSON = %s, want %s", results[0].RawJSON, `[null,"hello"]`)
+		t.Errorf("RawJSON = %s", results[0].RawJSON)
+	}
+	if results[0].ErrorCode != 0 {
+		t.Errorf("ErrorCode = %d, want 0", results[0].ErrorCode)
 	}
 }
 
-func TestDecodeResponse_StripsAntiHijackPrefix(t *testing.T) {
-	body := []byte(")]}'\n" + "10\n" + `["wrb.fr"]`)
-	if _, err := decodeResponse(body); err != nil {
-		t.Errorf("expected no error after stripping prefix: %v", err)
+func TestDecodeResponse_TolerantOfNewlines(t *testing.T) {
+	// Some Google responses (or our test synthesis) put \n between segments;
+	// the decoder should tolerate either format.
+	chunk1 := `[["wrb.fr","X","42",null,null,null,"generic"]]`
+	body := []byte(")]}'\n" + strconv.Itoa(len(chunk1)) + "\n" + chunk1)
+
+	results, err := decodeResponse(body)
+	if err != nil {
+		t.Fatalf("decodeResponse: %v", err)
+	}
+	if len(results) != 1 || string(results[0].RawJSON) != "42" {
+		t.Errorf("results = %+v", results)
+	}
+}
+
+func TestDecodeResponse_ErrorChunk(t *testing.T) {
+	// Captured shape from a U5lrKc failure: position [2] is null, position [5]
+	// is [3] meaning "error code 3". Decoder should surface the code.
+	chunk := `[["wrb.fr","U5lrKc",null,null,null,[3],"generic"],["di",19]]`
+	body := []byte(")]}'" + strconv.Itoa(len(chunk)) + chunk)
+
+	results, err := decodeResponse(body)
+	if err != nil {
+		t.Fatalf("decodeResponse: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].RpcID != "U5lrKc" {
+		t.Errorf("RpcID = %q", results[0].RpcID)
+	}
+	if len(results[0].RawJSON) != 0 {
+		t.Errorf("RawJSON should be empty for error chunk, got %s", results[0].RawJSON)
+	}
+	if results[0].ErrorCode != 3 {
+		t.Errorf("ErrorCode = %d, want 3", results[0].ErrorCode)
 	}
 }
 

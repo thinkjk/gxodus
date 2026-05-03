@@ -319,14 +319,23 @@ func (c *Client) CallRPC(ctx context.Context, rpcid, args, version string) ([]by
 	}
 
 	for _, r := range results {
-		if r.RpcID == rpcid {
-			return r.RawJSON, nil
+		if r.RpcID != rpcid {
+			continue
 		}
+		if r.ErrorCode != 0 {
+			dumpPath := dumpResponseBody(fmt.Sprintf("rpc-%s-error-%d", rpcid, r.ErrorCode), respBytes)
+			return nil, fmt.Errorf("rpc %s returned error code %d (full body dumped to %s)",
+				rpcid, r.ErrorCode, dumpPath)
+		}
+		if len(r.RawJSON) == 0 {
+			dumpPath := dumpResponseBody(fmt.Sprintf("rpc-%s-empty", rpcid), respBytes)
+			return nil, fmt.Errorf("rpc %s returned empty data (full body dumped to %s)",
+				rpcid, dumpPath)
+		}
+		return r.RawJSON, nil
 	}
 
-	// No matching wrb.fr chunk — Google likely returned an "er" error chunk
-	// instead. Dump the full body and include a body excerpt in the error so
-	// we can see what went wrong (404 product slug? 401 inside? 500?).
+	// No matching wrb.fr chunk at all — extreme edge case. Dump body.
 	dumpPath := dumpResponseBody(fmt.Sprintf("rpc-%s-no-match", rpcid), respBytes)
 	excerpt := string(respBytes)
 	if len(excerpt) > 600 {

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
-	"strings"
 )
 
 // encodeRequest builds the URL-encoded body for a batchexecute POST.
@@ -32,52 +31,59 @@ func encodeRequest(rpcid, args, version, atToken string) (string, error) {
 
 // rpcResult is one decoded rpc invocation from a batchexecute response.
 type rpcResult struct {
-	RpcID   string
-	RawJSON []byte // the inner JSON-string parsed back out (the "doubly-escaped" payload)
+	RpcID     string
+	RawJSON   []byte // the inner JSON-string parsed back out (may be empty if error)
+	ErrorCode int    // non-zero when Google returned an error chunk
 }
 
-const antiHijackPrefix = ")]}'\n"
+const antiHijackPrefix = ")]}'"
 
 // decodeResponse parses Google's chunked batchexecute response body.
-// Returns one rpcResult per "wrb.fr"-tagged chunk in the response.
+// Format (no separators between segments):
+//
+//	)]}'<length-digits><chunk-bytes><length-digits><chunk-bytes>...
+//
+// Optional whitespace (\n, \r, \t, space) between segments is tolerated.
+//
+// Each <chunk-bytes> is a JSON array of arrays. Returns one rpcResult per
+// "wrb.fr"-tagged entry. When a wrb.fr entry has null inner data plus a
+// non-null array at position [5], that's an error chunk — we extract the
+// first integer of the [5] array as ErrorCode (Google's internal code).
 func decodeResponse(body []byte) ([]rpcResult, error) {
 	if !bytes.HasPrefix(body, []byte(antiHijackPrefix)) {
 		return nil, errors.New("response missing )]}' prefix — not a batchexecute body")
 	}
-	body = bytes.TrimPrefix(body, []byte(antiHijackPrefix))
+	body = body[len(antiHijackPrefix):]
+	body = bytes.TrimLeft(body, " \t\r\n")
 
 	var results []rpcResult
 	for len(body) > 0 {
-		// Each chunk: <decimal length>\n<JSON bytes>
-		nl := bytes.IndexByte(body, '\n')
-		if nl <= 0 {
-			break
+		// Length: leading digits.
+		i := 0
+		for i < len(body) && body[i] >= '0' && body[i] <= '9' {
+			i++
 		}
-		lengthStr := strings.TrimSpace(string(body[:nl]))
-		if lengthStr == "" {
-			body = body[nl+1:]
-			continue
+		if i == 0 {
+			break // no digits → end of meaningful content
 		}
-		chunkLen, err := strconv.Atoi(lengthStr)
+		chunkLen, err := strconv.Atoi(string(body[:i]))
 		if err != nil {
-			return nil, fmt.Errorf("parsing chunk length %q: %w", lengthStr, err)
+			return nil, fmt.Errorf("parsing chunk length %q: %w", body[:i], err)
 		}
-		body = body[nl+1:]
+		body = body[i:]
+		body = bytes.TrimLeft(body, " \t\r\n")
+
 		if len(body) < chunkLen {
 			return nil, fmt.Errorf("chunk says %d bytes but only %d remain", chunkLen, len(body))
 		}
 		chunkJSON := body[:chunkLen]
 		body = body[chunkLen:]
-		// Skip the trailing newline after the chunk (if present)
-		if len(body) > 0 && body[0] == '\n' {
-			body = body[1:]
-		}
+		body = bytes.TrimLeft(body, " \t\r\n")
 
-		// Each chunk is a JSON array of arrays; the rpc results are the elements
-		// whose first item is the literal string "wrb.fr".
 		var chunkArr [][]interface{}
 		if err := json.Unmarshal(chunkJSON, &chunkArr); err != nil {
-			// Some chunks (the "di"/"e" diagnostic ones) won't match this shape — skip.
+			// Diagnostic chunks ("di", "e", "af.httprm") have shapes we don't
+			// model; skip them silently.
 			continue
 		}
 		for _, entry := range chunkArr {
@@ -92,14 +98,24 @@ func decodeResponse(body []byte) ([]rpcResult, error) {
 			if !ok {
 				continue
 			}
-			inner, ok := entry[2].(string)
-			if !ok {
-				continue
+
+			r := rpcResult{RpcID: rpcid}
+			if entry[2] != nil {
+				if inner, ok := entry[2].(string); ok {
+					r.RawJSON = []byte(inner)
+				}
 			}
-			results = append(results, rpcResult{
-				RpcID:   rpcid,
-				RawJSON: []byte(inner),
-			})
+			// Position [5] holds error metadata when non-null. Format observed:
+			//   ["wrb.fr", rpcid, null, null, null, [N], "generic"]
+			// where N is Google's internal error code (1-N).
+			if len(entry) >= 6 && entry[5] != nil {
+				if errArr, ok := entry[5].([]interface{}); ok && len(errArr) > 0 {
+					if code, ok := errArr[0].(float64); ok {
+						r.ErrorCode = int(code)
+					}
+				}
+			}
+			results = append(results, r)
 		}
 	}
 	return results, nil
