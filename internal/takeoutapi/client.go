@@ -199,6 +199,19 @@ func (c *Client) ensureTokens(ctx context.Context) error {
 	}
 	fmt.Fprintf(os.Stderr, "[takeoutapi]   body excerpt (first 800 chars):\n--- BEGIN EXCERPT ---\n%s\n--- END EXCERPT ---\n", excerpt)
 
+	// Diagnostic: list every WIZ_global_data block + its cfb2h, so we can see
+	// which one extractTokens picked (the page can embed >1 block; we want the
+	// boq_takeoutuiserver one, not boq_identityfrontenduiserver).
+	blocks := splitWizBlocks(body)
+	fmt.Fprintf(os.Stderr, "[takeoutapi]   found %d WIZ_global_data block(s):\n", len(blocks))
+	for i, b := range blocks {
+		bl := "(no cfb2h)"
+		if m := buildRE.FindStringSubmatch(b); len(m) >= 2 {
+			bl = m[1]
+		}
+		fmt.Fprintf(os.Stderr, "[takeoutapi]     block %d: cfb2h=%s\n", i, bl)
+	}
+
 	tokens, err := extractTokens(body)
 	if err != nil {
 		return fmt.Errorf("extracting tokens from page (HTTP %d, %d bytes body, dumped to %s): %w",
