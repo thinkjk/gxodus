@@ -28,27 +28,27 @@ func TestExtractTokens_MissingXSRF(t *testing.T) {
 	}
 }
 
-// TestExtractTokens_PrefersTakeoutBlock guards against a regression where the
-// takeout page embeds multiple WIZ_global_data blocks (one for an identity
-// widget, one for the actual TakeoutUi product). batchexecute rejects
-// (error code 3) the identity-block tokens, so we must pick the takeoutui one.
-func TestExtractTokens_PrefersTakeoutBlock(t *testing.T) {
+// TestExtractTokens_FirstCompleteBlock confirms that when multiple
+// WIZ_global_data blocks exist, we pick the first one that has BOTH SNlM0e
+// and cfb2h. Real takeout pages have a complete identity block followed by a
+// stub second block (no cfb2h) — the first one is what batchexecute wants.
+func TestExtractTokens_FirstCompleteBlock(t *testing.T) {
 	html := `<html><body>
 <script>WIZ_global_data = {"SNlM0e":"identity-xsrf:111","cfb2h":"boq_identityfrontenduiserver_20260429.06_p0","FdrFJe":"111"};</script>
-<script>WIZ_global_data = {"SNlM0e":"takeout-xsrf:222","cfb2h":"boq_takeoutuiserver_20260429.06_p0","FdrFJe":"222"};</script>
+<script>WIZ_global_data = {"some_other_field":"stub second block, no SNlM0e or cfb2h"};</script>
 </body></html>`
 
 	tokens, err := extractTokens(html)
 	if err != nil {
 		t.Fatalf("extractTokens: %v", err)
 	}
-	if tokens.XSRF != "takeout-xsrf:222" {
-		t.Errorf("XSRF = %q, want takeout-xsrf:222", tokens.XSRF)
+	if tokens.XSRF != "identity-xsrf:111" {
+		t.Errorf("XSRF = %q, want identity-xsrf:111", tokens.XSRF)
 	}
-	if tokens.BuildLabel != "boq_takeoutuiserver_20260429.06_p0" {
-		t.Errorf("BuildLabel = %q, want takeoutui build", tokens.BuildLabel)
+	if tokens.BuildLabel != "boq_identityfrontenduiserver_20260429.06_p0" {
+		t.Errorf("BuildLabel = %q", tokens.BuildLabel)
 	}
-	if tokens.SessionID != "222" {
-		t.Errorf("SessionID = %q, want 222", tokens.SessionID)
+	if tokens.SessionID != "111" {
+		t.Errorf("SessionID = %q, want 111", tokens.SessionID)
 	}
 }

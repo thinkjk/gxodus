@@ -2,6 +2,8 @@ package takeoutapi
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -282,6 +284,8 @@ func (c *Client) CallRPC(ctx context.Context, rpcid, args, version string) ([]by
 	endpoint := fmt.Sprintf("%s/u/%d/_/TakeoutUi/data/batchexecute?%s", c.baseURL, c.userIdx, q.Encode())
 	fmt.Fprintf(os.Stderr, "[takeoutapi]   POST %s\n", endpoint)
 	fmt.Fprintf(os.Stderr, "[takeoutapi]   request body size: %d bytes\n", len(body))
+	reqDumpPath := dumpResponseBody(fmt.Sprintf("rpc-%s-request", rpcid), []byte(body))
+	fmt.Fprintf(os.Stderr, "[takeoutapi]   request body dumped to: %s\n", reqDumpPath)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, strings.NewReader(body))
 	if err != nil {
@@ -298,6 +302,16 @@ func (c *Client) CallRPC(ctx context.Context, rpcid, args, version string) ([]by
 	req.Header.Set("x-goog-ext-525002608-jspb", "[215]")
 	// Referer is checked by some Google endpoints.
 	req.Header.Set("Referer", fmt.Sprintf("%s/u/%d/", c.baseURL, c.userIdx))
+	// SAPISIDHASH-style authorization. Reads (fhjYTc) work with cookies alone;
+	// writes (U5lrKc) appear to need the SHA1(timestamp + " " + sapisid + " " +
+	// origin) hash too. Send all three variants so whichever Google's verifier
+	// is checking, we cover it.
+	if auth := c.buildSAPISIDHashAuth(); auth != "" {
+		req.Header.Set("Authorization", auth)
+		fmt.Fprintf(os.Stderr, "[takeoutapi]   Authorization header: %s...\n", auth[:min(40, len(auth))])
+	} else {
+		fmt.Fprintln(os.Stderr, "[takeoutapi]   Authorization header: (no SAPISID cookie, skipped)")
+	}
 
 	c.applyCookies(req)
 
@@ -366,4 +380,49 @@ func (c *Client) CallRPC(ctx context.Context, rpcid, args, version string) ([]by
 	}
 	return nil, fmt.Errorf("rpc %s not found in response (full body dumped to %s); body excerpt: %s",
 		rpcid, dumpPath, excerpt)
+}
+
+// buildSAPISIDHashAuth constructs the Authorization header that Google's
+// internal web APIs use for write operations. Format:
+//
+//	SAPISIDHASH {timestamp}_{sha1(timestamp + " " + sapisid + " " + origin)}
+//	SAPISID1PHASH ... (computed from __Secure-1PAPISID)
+//	SAPISID3PHASH ... (computed from __Secure-3PAPISID)
+//
+// Sent space-separated so Google can verify whichever it cares about. Returns
+// "" if no SAPISID-family cookie is available (read-only, cookies-only auth).
+func (c *Client) buildSAPISIDHashAuth() string {
+	type variant struct {
+		cookieName string
+		scheme     string
+	}
+	variants := []variant{
+		{"SAPISID", "SAPISIDHASH"},
+		{"__Secure-1PAPISID", "SAPISID1PHASH"},
+		{"__Secure-3PAPISID", "SAPISID3PHASH"},
+	}
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	origin := c.baseURL // "https://takeout.google.com"
+
+	var parts []string
+	for _, v := range variants {
+		val := c.cookieValue(v.cookieName)
+		if val == "" {
+			continue
+		}
+		h := sha1.Sum([]byte(ts + " " + val + " " + origin))
+		parts = append(parts, fmt.Sprintf("%s %s_%s", v.scheme, ts, hex.EncodeToString(h[:])))
+	}
+	return strings.Join(parts, " ")
+}
+
+// cookieValue returns the value of the cookie with the given name from the
+// client's cookie list, or "" if not present.
+func (c *Client) cookieValue(name string) string {
+	for _, ck := range c.cookies {
+		if ck.Name == name {
+			return ck.Value
+		}
+	}
+	return ""
 }
