@@ -67,9 +67,8 @@ run_auth() {
     gxodus auth "$CONFIG_ARG" "$CONFIG_VAL"
 }
 
-# Xvfb is needed for non-interactive export too — chromium runs non-headless
-# on display :99 to share the same fingerprint as the auth chromium.
-ensure_xvfb
+# Xvfb is now only needed for interactive re-auth (run_auth starts it on
+# demand). Export, status, and poll all use HTTP via the takeoutapi package.
 
 build_export_args() {
     ARGS=""
@@ -117,9 +116,6 @@ elif [ "$COMMAND" = "status" ]; then
 elif [ "$COMMAND" = "export" ]; then
     if [ -n "$GXODUS_INTERVAL" ]; then
         # Long-running scheduled mode: export every $GXODUS_INTERVAL forever.
-        # Pre-start Xvfb so noVNC re-auth is reachable at any time without
-        # racing with whichever cycle needs it.
-        ensure_xvfb
 
         # After an auth failure, wait this short interval before retrying
         # instead of the full $GXODUS_INTERVAL — otherwise a single bad
