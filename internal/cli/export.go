@@ -3,14 +3,15 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/thinkjk/gxodus/internal/auth"
-	"github.com/thinkjk/gxodus/internal/browser"
 	"github.com/thinkjk/gxodus/internal/config"
 	"github.com/thinkjk/gxodus/internal/downloader"
 	"github.com/thinkjk/gxodus/internal/extractor"
 	"github.com/thinkjk/gxodus/internal/notify"
 	"github.com/thinkjk/gxodus/internal/poller"
+	"github.com/thinkjk/gxodus/internal/takeoutapi"
 	"github.com/spf13/cobra"
 )
 
@@ -89,45 +90,36 @@ var exportCmd = &cobra.Command{
 		//  If the session is genuinely expired, InitiateExport below will
 		//  detect the redirect and fire the same auth_expired notification.)
 
-		// Create browser context for export. Non-headless on the existing Xvfb
-		// display so the export chromium has the same fingerprint as the auth
-		// chromium that produced the cookies (Google trusts that fingerprint).
-		// UserDataDir shares the auth chromium's profile so Google sees the
-		// same persistent device — without this, a fresh chromium per
-		// invocation triggers extra verification on sensitive Takeout pages.
-		browserCtx, cancel, err := browser.NewContext(ctx, browser.Options{
-			Headless:    false,
-			RemoteURL:   remoteChrome,
-			UserDataDir: browser.ProfileDir(),
-		})
+		client, err := takeoutapi.NewClient(cookies, 0)
 		if err != nil {
-			return fmt.Errorf("creating browser: %w", err)
-		}
-		defer cancel()
-
-		if err := browser.InjectCookies(browserCtx, cookies); err != nil {
-			return fmt.Errorf("injecting cookies: %w", err)
+			return fmt.Errorf("creating takeout client: %w", err)
 		}
 
-		// Initiate export
-		_, err = browser.InitiateExport(browserCtx, browser.ExportOptions{
-			FileSize:     cfg.FileSize,
-			FileType:     cfg.FileType,
-			Frequency:    cfg.Frequency,
-			ActivityLogs: cfg.ActivityLogs,
-		})
+		products := defaultProductSlugs()
+		if cfg.ActivityLogs {
+			products = append(products, "bond") // "bond" is the slug for Access Log Activity
+		}
+
+		sizeBytes, err := parseFileSize(cfg.FileSize)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "InitiateExport failed: %v\n", err)
 			notify.Fire(cfg.Notify, "error", notify.EventData{Error: err.Error()})
-			if err.Error() == "session expired: redirected to login page" {
-				notify.Fire(cfg.Notify, "auth_expired", notify.EventData{Error: err.Error()})
-				os.Exit(1)
-			}
+			return fmt.Errorf("file size: %w", err)
+		}
+
+		newExport, err := client.CreateExport(ctx, takeoutapi.CreateExportOptions{
+			Products:  products,
+			Format:    strings.ToUpper(cfg.FileType),
+			SizeBytes: sizeBytes,
+			Frequency: cfg.Frequency,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "CreateExport failed: %v\n", err)
+			notify.Fire(cfg.Notify, "error", notify.EventData{Error: err.Error()})
 			os.Exit(2)
 		}
 
+		fmt.Printf("Export submitted (uuid=%s)\n", newExport.UUID)
 		notify.Fire(cfg.Notify, "export_started", notify.EventData{})
-		cancel() // Close browser while we wait
 
 		// Poll for completion
 		pollDuration, err := cfg.PollDuration()
@@ -208,5 +200,47 @@ func formatSize(bytes int64) string {
 		return fmt.Sprintf("%.2f KB", float64(bytes)/float64(KB))
 	default:
 		return fmt.Sprintf("%d B", bytes)
+	}
+}
+
+// defaultProductSlugs returns the canonical product list for a "select all"
+// Takeout export, minus "bond" (Access Log Activity) which is opt-in.
+// Captured 2026-05-02; if Google adds a product, this list will be missing it.
+func defaultProductSlugs() []string {
+	return []string{
+		"alerts", "analytics", "android", "arts_and_culture", "course_kit",
+		"blogger", "brand_accounts", "calendar", "chrome", "chrome_os",
+		"chrome_web_store", "classroom", "contacts", "discover", "drive",
+		"family", "fiber", "fit", "fitbit", "ai_sandbox", "gemini",
+		"google_account", "google_ads", "my_business", "hangouts_chat",
+		"google_cloud_search", "developer_platform", "earth", "feedback",
+		"google_finance", "support_content", "meet", "google_one", "google_pay",
+		"photos", "books", "play_games_services", "play_movies", "play",
+		"podcasts", "hats_surveys", "shopping", "google_store", "google_wallet",
+		"apps_marketplace", "groups", "home_graph", "keep", "gmail",
+		"manufacturer_center", "maps", "local_actions", "merchant_center",
+		"messages", "my_activity", "nest", "news", "package_tracking",
+		"search_console", "personal_safety", "assisted_calling", "backlight",
+		"pixel_telemetry", "profile", "custom_search", "my_orders", "reminders",
+		"save", "search_ugc", "search_notifications", "streetview", "tasks",
+		"location_history", "voice", "voice_and_audio_activity", "workflows",
+	}
+}
+
+// parseFileSize converts a config string like "2GB" to bytes.
+func parseFileSize(size string) (int64, error) {
+	switch size {
+	case "", "2GB":
+		return 2 * 1024 * 1024 * 1024, nil
+	case "1GB":
+		return 1 * 1024 * 1024 * 1024, nil
+	case "4GB":
+		return 4 * 1024 * 1024 * 1024, nil
+	case "10GB":
+		return 10 * 1024 * 1024 * 1024, nil
+	case "50GB":
+		return 50 * 1024 * 1024 * 1024, nil
+	default:
+		return 0, fmt.Errorf("unknown file_size %q", size)
 	}
 }
