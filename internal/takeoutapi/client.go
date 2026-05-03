@@ -205,8 +205,8 @@ func (c *Client) ensureTokens(ctx context.Context) error {
 			resp.StatusCode, len(html), dumpPath, err)
 	}
 
-	fmt.Fprintf(os.Stderr, "[takeoutapi]   ✓ extracted XSRF token (%d chars), buildLabel=%q\n",
-		len(tokens.XSRF), tokens.BuildLabel)
+	fmt.Fprintf(os.Stderr, "[takeoutapi]   ✓ extracted XSRF token (%d chars), buildLabel=%q, sessionID=%q\n",
+		len(tokens.XSRF), tokens.BuildLabel, tokens.SessionID)
 
 	c.tokens = tokens
 	return nil
@@ -254,6 +254,9 @@ func (c *Client) CallRPC(ctx context.Context, rpcid, args, version string) ([]by
 	q := url.Values{}
 	q.Set("rpcids", rpcid)
 	q.Set("source-path", fmt.Sprintf("/u/%d/", c.userIdx))
+	if c.tokens.SessionID != "" {
+		q.Set("f.sid", c.tokens.SessionID)
+	}
 	q.Set("bl", c.tokens.BuildLabel)
 	q.Set("hl", "en")
 	q.Set("pageId", "none")
