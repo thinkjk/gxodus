@@ -278,6 +278,13 @@ func (c *Client) CallRPC(ctx context.Context, rpcid, args, version string) ([]by
 	req.Header.Set("X-Same-Domain", "1")
 	req.Header.Set("Origin", c.baseURL)
 	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	// Takeout-specific extension header observed on every batchexecute call in
+	// real browser captures. Reads tolerate its absence; writes (U5lrKc) may not.
+	req.Header.Set("x-goog-ext-525002608-jspb", "[215]")
+	// Referer is checked by some Google endpoints.
+	req.Header.Set("Referer", fmt.Sprintf("%s/u/%d/", c.baseURL, c.userIdx))
 
 	c.applyCookies(req)
 
