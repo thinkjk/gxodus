@@ -128,9 +128,8 @@ var exportCmd = &cobra.Command{
 		}
 
 		pollResult, err := poller.Poll(ctx, poller.Config{
-			Interval:  pollDuration,
-			RemoteURL: remoteChrome,
-			Cookies:   cookies,
+			Interval: pollDuration,
+			Cookies:  cookies,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Poll failed: %v\n", err)

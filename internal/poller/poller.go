@@ -7,12 +7,12 @@ import (
 	"time"
 
 	"github.com/thinkjk/gxodus/internal/browser"
+	"github.com/thinkjk/gxodus/internal/takeoutapi"
 )
 
 type Config struct {
-	Interval    time.Duration
-	RemoteURL   string
-	Cookies     []*http.Cookie
+	Interval time.Duration
+	Cookies  []*http.Cookie
 }
 
 type Result struct {
@@ -85,21 +85,35 @@ func Poll(ctx context.Context, cfg Config) (*Result, error) {
 }
 
 func checkOnce(ctx context.Context, cfg Config) (*browser.ExportStatus, error) {
-	browserCtx, cancel, err := browser.NewContext(ctx, browser.Options{
-		Headless:    false,
-		RemoteURL:   cfg.RemoteURL,
-		UserDataDir: browser.ProfileDir(),
-	})
+	client, err := takeoutapi.NewClient(cfg.Cookies, 0)
 	if err != nil {
-		return nil, fmt.Errorf("creating browser: %w", err)
-	}
-	defer cancel()
-
-	if err := browser.InjectCookies(browserCtx, cfg.Cookies); err != nil {
-		return nil, fmt.Errorf("injecting cookies: %w", err)
+		return nil, fmt.Errorf("creating takeout client: %w", err)
 	}
 
-	return browser.CheckExportStatus(browserCtx)
+	exports, err := client.ListExports(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing exports: %w", err)
+	}
+
+	if len(exports) == 0 {
+		return &browser.ExportStatus{State: "none"}, nil
+	}
+
+	// Most recent is index 0 (Google sorts newest first in the UI).
+	e := exports[0]
+
+	switch e.Status {
+	case takeoutapi.StatusComplete:
+		return &browser.ExportStatus{State: "complete", DownloadURLs: e.DownloadURLs}, nil
+	case takeoutapi.StatusInProgress:
+		return &browser.ExportStatus{State: "in_progress"}, nil
+	case takeoutapi.StatusFailed:
+		return &browser.ExportStatus{State: "failed"}, nil
+	case takeoutapi.StatusExpired:
+		return &browser.ExportStatus{State: "expired"}, nil
+	default:
+		return &browser.ExportStatus{State: "unknown"}, nil
+	}
 }
 
 func nextBackoff(current, base time.Duration) time.Duration {
