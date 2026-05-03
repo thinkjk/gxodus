@@ -7,8 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
-	"strconv"
+	"os"
 )
 
 // encodeRequest builds the URL-encoded body for a batchexecute POST.
@@ -39,53 +40,49 @@ type rpcResult struct {
 const antiHijackPrefix = ")]}'"
 
 // decodeResponse parses Google's chunked batchexecute response body.
-// Format (no separators between segments):
 //
-//	)]}'<length-digits><chunk-bytes><length-digits><chunk-bytes>...
+// Format (after the )]}' prefix): a stream of JSON values where each "real"
+// chunk (an array of arrays) is preceded by a number token (the chunk's
+// declared byte length). The declared length is approximate / not always
+// precise, so we IGNORE it and let json.Decoder tell us where each value
+// actually ends.
 //
-// Optional whitespace (\n, \r, \t, space) between segments is tolerated.
+// Optional whitespace between values is tolerated by json.Decoder
+// automatically.
 //
-// Each <chunk-bytes> is a JSON array of arrays. Returns one rpcResult per
-// "wrb.fr"-tagged entry. When a wrb.fr entry has null inner data plus a
-// non-null array at position [5], that's an error chunk — we extract the
-// first integer of the [5] array as ErrorCode (Google's internal code).
+// Returns one rpcResult per "wrb.fr"-tagged entry across all chunks. When a
+// wrb.fr entry has null inner data plus a non-null array at position [5],
+// that's an error chunk — we extract the first integer of the [5] array as
+// ErrorCode (Google's internal code).
 func decodeResponse(body []byte) ([]rpcResult, error) {
 	if !bytes.HasPrefix(body, []byte(antiHijackPrefix)) {
 		return nil, errors.New("response missing )]}' prefix — not a batchexecute body")
 	}
 	body = body[len(antiHijackPrefix):]
-	body = bytes.TrimLeft(body, " \t\r\n")
+
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber() // so number tokens come back as json.Number, not float64
 
 	var results []rpcResult
-	for len(body) > 0 {
-		// Length: leading digits.
-		i := 0
-		for i < len(body) && body[i] >= '0' && body[i] <= '9' {
-			i++
+	for {
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			if err == io.EOF {
+				break
+			}
+			// Stop on first parse error. Don't fail hard — return what we have
+			// in case some chunks parsed before the bad one.
+			fmt.Fprintf(os.Stderr, "[takeoutapi]   decodeResponse: stopping at JSON err: %v\n", err)
+			break
 		}
-		if i == 0 {
-			break // no digits → end of meaningful content
-		}
-		chunkLen, err := strconv.Atoi(string(body[:i]))
-		if err != nil {
-			return nil, fmt.Errorf("parsing chunk length %q: %w", body[:i], err)
-		}
-		body = body[i:]
-		body = bytes.TrimLeft(body, " \t\r\n")
 
-		if len(body) < chunkLen {
-			return nil, fmt.Errorf("chunk says %d bytes but only %d remain", chunkLen, len(body))
-		}
-		chunkJSON := body[:chunkLen]
-		body = body[chunkLen:]
-		body = bytes.TrimLeft(body, " \t\r\n")
-
+		// Try to parse as a chunk array. Length-hint numbers between chunks
+		// will fail this and get silently skipped.
 		var chunkArr [][]interface{}
-		if err := json.Unmarshal(chunkJSON, &chunkArr); err != nil {
-			// Diagnostic chunks ("di", "e", "af.httprm") have shapes we don't
-			// model; skip them silently.
+		if err := json.Unmarshal(raw, &chunkArr); err != nil {
 			continue
 		}
+
 		for _, entry := range chunkArr {
 			if len(entry) < 3 {
 				continue
@@ -107,11 +104,16 @@ func decodeResponse(body []byte) ([]rpcResult, error) {
 			}
 			// Position [5] holds error metadata when non-null. Format observed:
 			//   ["wrb.fr", rpcid, null, null, null, [N], "generic"]
-			// where N is Google's internal error code (1-N).
+			// where N is Google's internal error code.
 			if len(entry) >= 6 && entry[5] != nil {
 				if errArr, ok := entry[5].([]interface{}); ok && len(errArr) > 0 {
-					if code, ok := errArr[0].(float64); ok {
-						r.ErrorCode = int(code)
+					switch v := errArr[0].(type) {
+					case float64:
+						r.ErrorCode = int(v)
+					case json.Number:
+						if n, err := v.Int64(); err == nil {
+							r.ErrorCode = int(n)
+						}
 					}
 				}
 			}
