@@ -53,3 +53,56 @@ func TestClient_CallRPC(t *testing.T) {
 		t.Errorf("body missing rpcid: %s", capturedBody)
 	}
 }
+
+func TestFilterCookies(t *testing.T) {
+	in := []*http.Cookie{
+		// Duplicate SID — generic domain should win.
+		{Name: "SID", Value: "from-accounts", Domain: "accounts.google.com"},
+		{Name: "SID", Value: "from-google", Domain: ".google.com"},
+
+		// Duplicate OSID — same scoring, last write wins.
+		{Name: "OSID", Value: "first", Domain: "myaccount.google.com"},
+		{Name: "OSID", Value: "second", Domain: "myaccount.google.com"},
+
+		// Login-only cookies — should be dropped.
+		{Name: "LSID", Value: "loginsid", Domain: "accounts.google.com"},
+		{Name: "ACCOUNT_CHOOSER", Value: "ac", Domain: "accounts.google.com"},
+		{Name: "SMSV", Value: "smsv", Domain: "accounts.google.com"},
+
+		// __Host-* cookies — should be dropped.
+		{Name: "__Host-1PLSID", Value: "host", Domain: "accounts.google.com"},
+		{Name: "__Host-GAPS", Value: "gaps", Domain: "accounts.google.com"},
+
+		// Normal generic cookie — should be kept.
+		{Name: "NID", Value: "nid", Domain: ".google.com"},
+	}
+
+	out := filterCookies(in)
+
+	byName := map[string]*http.Cookie{}
+	for _, ck := range out {
+		byName[ck.Name] = ck
+	}
+
+	// SID should be deduped to the .google.com one.
+	if sid, ok := byName["SID"]; !ok || sid.Value != "from-google" {
+		t.Errorf("SID not deduped to .google.com version: got %+v", sid)
+	}
+
+	// NID should be kept.
+	if _, ok := byName["NID"]; !ok {
+		t.Error("NID missing")
+	}
+
+	// OSID should be present (one of them).
+	if _, ok := byName["OSID"]; !ok {
+		t.Error("OSID missing")
+	}
+
+	// Login-only and __Host- cookies should be dropped.
+	for _, name := range []string{"LSID", "ACCOUNT_CHOOSER", "SMSV", "__Host-1PLSID", "__Host-GAPS"} {
+		if _, ok := byName[name]; ok {
+			t.Errorf("%s should have been filtered out", name)
+		}
+	}
+}

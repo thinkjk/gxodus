@@ -34,11 +34,14 @@ type Client struct {
 // cookiejar's domain matching ensures account/myaccount-scoped cookies
 // (which takeout sometimes needs) actually get sent.
 func NewClient(cookies []*http.Cookie, userIdx int) (*Client, error) {
+	filtered := filterCookies(cookies)
+	fmt.Fprintf(os.Stderr, "[takeoutapi] NewClient: %d cookies in, %d after dedup+filter\n",
+		len(cookies), len(filtered))
 	return &Client{
 		baseURL: "https://takeout.google.com",
 		userIdx: userIdx,
-		hc:      &http.Client{}, // intentionally no jar
-		cookies: cookies,
+		hc:      &http.Client{},
+		cookies: filtered,
 	}, nil
 }
 
@@ -48,7 +51,68 @@ func newClientForTest(baseURL string, cookies []*http.Cookie) *Client {
 		baseURL: baseURL,
 		userIdx: 0,
 		hc:      &http.Client{},
-		cookies: cookies,
+		cookies: filterCookies(cookies),
+	}
+}
+
+// filterCookies dedups cookies by name and skips ones that don't apply to
+// takeout.google.com. The chromedp storage.GetCookies() call returns every
+// cookie in the browser regardless of host — so if both ".google.com" and
+// "accounts.google.com" set a cookie with the same name (different values),
+// we'd send both and Google would reject the request as CookieMismatch.
+//
+// Strategy:
+//   1. Skip __Host-* cookies (host-only, non-transferable to takeout).
+//   2. Skip login-flow cookies (LSID, ACCOUNT_CHOOSER, SMSV) — these are
+//      set by accounts.google.com during sign-in and confuse takeout's
+//      session validation when present.
+//   3. For each remaining cookie name, keep the one with the most-generic
+//      domain (".google.com" > "google.com" > specific subdomain).
+func filterCookies(in []*http.Cookie) []*http.Cookie {
+	skipNames := map[string]bool{
+		"LSID":            true,
+		"ACCOUNT_CHOOSER": true,
+		"SMSV":            true,
+	}
+
+	best := map[string]*http.Cookie{}
+	for _, ck := range in {
+		if strings.HasPrefix(ck.Name, "__Host-") {
+			continue
+		}
+		if skipNames[ck.Name] {
+			continue
+		}
+
+		existing, found := best[ck.Name]
+		if !found || cookieDomainScore(ck) > cookieDomainScore(existing) {
+			best[ck.Name] = ck
+		}
+	}
+
+	out := make([]*http.Cookie, 0, len(best))
+	for _, ck := range best {
+		out = append(out, ck)
+	}
+	return out
+}
+
+// cookieDomainScore prefers cookies whose Domain applies to the broadest
+// set of *.google.com hosts. Higher score wins.
+//
+//	Domain ".google.com" or "google.com" = 100  (applies to all subdomains)
+//	Domain "takeout.google.com"          = 50   (applies specifically)
+//	Other *.google.com subdomains         = 10   (probably wrong context but
+//	                                              keep as last-resort fallback)
+func cookieDomainScore(ck *http.Cookie) int {
+	domain := strings.TrimPrefix(ck.Domain, ".")
+	switch domain {
+	case "google.com", "":
+		return 100
+	case "takeout.google.com":
+		return 50
+	default:
+		return 10
 	}
 }
 
