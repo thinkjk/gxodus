@@ -102,6 +102,19 @@ func InteractiveLogin(ctx context.Context, _ string) ([]*http.Cookie, error) {
 	}
 	defer cancel()
 
+	// Visit takeout.google.com so Google sets the takeout-specific cookies
+	// (OSID, __Secure-OSID, __Secure-1PSIDTS, AEC) before we extract.
+	// Without this, the freshly-logged-in chromium has account/myaccount
+	// cookies but lacks the ones takeout's API requires for cookie-only auth.
+	fmt.Println("Warming up Takeout session cookies...")
+	if err := chromedp.Run(browserCtx,
+		chromedp.Navigate("https://takeout.google.com/"),
+		chromedp.Sleep(3*time.Second),
+	); err != nil {
+		// Non-fatal — proceed with whatever cookies we have.
+		fmt.Fprintf(os.Stderr, "warmup navigate failed (proceeding anyway): %v\n", err)
+	}
+
 	cookies, err := ExtractCookies(browserCtx)
 	if err != nil {
 		return nil, fmt.Errorf("extracting cookies: %w", err)

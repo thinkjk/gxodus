@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"regexp"
@@ -22,40 +21,42 @@ type Client struct {
 	baseURL  string
 	userIdx  int
 	hc       *http.Client
+	cookies  []*http.Cookie // all session cookies, attached manually to every request
 	tokens   *PageTokens
 	tokensMu sync.Mutex
 	reqID    atomic.Int64
 }
 
 // NewClient creates a Client authenticated via the given session cookies.
-// userIdx is the Google account index in multi-account browser sessions
-// (typically 0 for the first signed-in account, 2 for a third, etc.).
-// gxodus's saved sessions usually need userIdx=0 unless the user signed in
-// to a non-primary account.
+// All provided cookies are attached to every request regardless of their
+// original Domain attribute — gxodus only ever calls takeout.google.com
+// from this client, so cross-domain leakage isn't a concern, and bypassing
+// cookiejar's domain matching ensures account/myaccount-scoped cookies
+// (which takeout sometimes needs) actually get sent.
 func NewClient(cookies []*http.Cookie, userIdx int) (*Client, error) {
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		return nil, fmt.Errorf("creating cookie jar: %w", err)
-	}
-	u, _ := url.Parse("https://takeout.google.com")
-	jar.SetCookies(u, cookies)
-
 	return &Client{
 		baseURL: "https://takeout.google.com",
 		userIdx: userIdx,
-		hc:      &http.Client{Jar: jar},
+		hc:      &http.Client{}, // intentionally no jar
+		cookies: cookies,
 	}, nil
 }
 
 // newClientForTest is a constructor that points the base URL at httptest.
 func newClientForTest(baseURL string, cookies []*http.Cookie) *Client {
-	jar, _ := cookiejar.New(nil)
-	u, _ := url.Parse(baseURL)
-	jar.SetCookies(u, cookies)
 	return &Client{
 		baseURL: baseURL,
 		userIdx: 0,
-		hc:      &http.Client{Jar: jar},
+		hc:      &http.Client{},
+		cookies: cookies,
+	}
+}
+
+// applyCookies attaches every session cookie to the request as a header.
+// Bypasses cookiejar's domain matching — see NewClient for rationale.
+func (c *Client) applyCookies(req *http.Request) {
+	for _, ck := range c.cookies {
+		req.AddCookie(&http.Cookie{Name: ck.Name, Value: ck.Value})
 	}
 }
 
@@ -71,14 +72,11 @@ func (c *Client) ensureTokens(ctx context.Context) error {
 	fmt.Fprintf(os.Stderr, "[takeoutapi] ensureTokens: GET %s\n", pageURL)
 
 	// Log cookies being sent (names only, no values for safety).
-	if u, err := url.Parse(c.baseURL); err == nil && c.hc.Jar != nil {
-		cookies := c.hc.Jar.Cookies(u)
-		names := make([]string, 0, len(cookies))
-		for _, ck := range cookies {
-			names = append(names, ck.Name)
-		}
-		fmt.Fprintf(os.Stderr, "[takeoutapi]   sending %d cookies: %v\n", len(cookies), names)
+	names := make([]string, 0, len(c.cookies))
+	for _, ck := range c.cookies {
+		names = append(names, ck.Name)
 	}
+	fmt.Fprintf(os.Stderr, "[takeoutapi]   sending %d cookies: %v\n", len(c.cookies), names)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", pageURL, nil)
 	if err != nil {
@@ -89,6 +87,8 @@ func (c *Client) ensureTokens(ctx context.Context) error {
 	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+
+	c.applyCookies(req)
 
 	resp, err := c.hc.Do(req)
 	if err != nil {
@@ -211,6 +211,8 @@ func (c *Client) CallRPC(ctx context.Context, rpcid, args, version string) ([]by
 	req.Header.Set("X-Same-Domain", "1")
 	req.Header.Set("Origin", c.baseURL)
 	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
+
+	c.applyCookies(req)
 
 	resp, err := c.hc.Do(req)
 	if err != nil {

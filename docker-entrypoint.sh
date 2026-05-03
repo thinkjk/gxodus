@@ -67,8 +67,10 @@ run_auth() {
     gxodus auth "$CONFIG_ARG" "$CONFIG_VAL"
 }
 
-# Xvfb is now only needed for interactive re-auth (run_auth starts it on
-# demand). Export, status, and poll all use HTTP via the takeoutapi package.
+# Eagerly start Xvfb + noVNC stack at boot so the user can ad-hoc re-auth
+# via noVNC without first having to wipe session.enc + restart. Xvfb's
+# memory cost in steady state (~50 MB) is worth the UX win.
+ensure_xvfb
 
 build_export_args() {
     ARGS=""
