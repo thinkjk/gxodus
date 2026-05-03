@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"github.com/thinkjk/gxodus/internal/auth"
-	"github.com/thinkjk/gxodus/internal/browser"
+	"github.com/thinkjk/gxodus/internal/takeoutapi"
 	"github.com/spf13/cobra"
 )
 
@@ -27,39 +27,30 @@ var statusCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		browserCtx, cancel, err := browser.NewContext(ctx, browser.Options{
-			Headless:    false,
-			RemoteURL:   remoteChrome,
-			UserDataDir: browser.ProfileDir(),
-		})
+		client, err := takeoutapi.NewClient(cookies, 0)
 		if err != nil {
-			return fmt.Errorf("creating browser: %w", err)
-		}
-		defer cancel()
-
-		if err := browser.InjectCookies(browserCtx, cookies); err != nil {
-			return fmt.Errorf("injecting cookies: %w", err)
+			return fmt.Errorf("creating takeout client: %w", err)
 		}
 
-		status, err := browser.CheckExportStatus(browserCtx)
+		exports, err := client.ListExports(ctx)
 		if err != nil {
-			return fmt.Errorf("checking status: %w", err)
+			return fmt.Errorf("listing exports: %w", err)
 		}
 
-		switch status.State {
-		case "complete":
-			fmt.Println("Export is complete and ready for download.")
-			fmt.Printf("Download URLs: %d file(s)\n", len(status.DownloadURLs))
-		case "in_progress":
-			fmt.Println("Export is still in progress...")
-		case "none":
+		if len(exports) == 0 {
 			fmt.Println("No exports found.")
-		case "failed":
-			fmt.Println("Export has failed.")
-		default:
-			fmt.Printf("Export status: %s\n", status.State)
+			return nil
 		}
 
+		for _, e := range exports {
+			fmt.Printf("- %s (%s) created %s\n",
+				e.UUID,
+				e.Status,
+				e.CreatedAt.Format("2006-01-02 15:04"))
+			for _, url := range e.DownloadURLs {
+				fmt.Printf("    download: %s\n", url)
+			}
+		}
 		return nil
 	},
 }
