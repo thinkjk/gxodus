@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/thinkjk/gxodus/internal/browser"
 	"github.com/thinkjk/gxodus/internal/takeoutapi"
 )
 
@@ -18,6 +17,13 @@ type Config struct {
 type Result struct {
 	DownloadURLs []string
 	Duration     time.Duration
+}
+
+// ExportStatus is the parsed Takeout export state, returned by checkOnce.
+// State is one of: "complete", "in_progress", "failed", "expired", "none", "unknown".
+type ExportStatus struct {
+	State        string
+	DownloadURLs []string
 }
 
 // Poll checks the Takeout export status at regular intervals until the export
@@ -84,7 +90,7 @@ func Poll(ctx context.Context, cfg Config) (*Result, error) {
 	}
 }
 
-func checkOnce(ctx context.Context, cfg Config) (*browser.ExportStatus, error) {
+func checkOnce(ctx context.Context, cfg Config) (*ExportStatus, error) {
 	client, err := takeoutapi.NewClient(cfg.Cookies, 0)
 	if err != nil {
 		return nil, fmt.Errorf("creating takeout client: %w", err)
@@ -96,7 +102,7 @@ func checkOnce(ctx context.Context, cfg Config) (*browser.ExportStatus, error) {
 	}
 
 	if len(exports) == 0 {
-		return &browser.ExportStatus{State: "none"}, nil
+		return &ExportStatus{State: "none"}, nil
 	}
 
 	// Most recent is index 0 (Google sorts newest first in the UI).
@@ -104,15 +110,15 @@ func checkOnce(ctx context.Context, cfg Config) (*browser.ExportStatus, error) {
 
 	switch e.Status {
 	case takeoutapi.StatusComplete:
-		return &browser.ExportStatus{State: "complete", DownloadURLs: e.DownloadURLs}, nil
+		return &ExportStatus{State: "complete", DownloadURLs: e.DownloadURLs}, nil
 	case takeoutapi.StatusInProgress:
-		return &browser.ExportStatus{State: "in_progress"}, nil
+		return &ExportStatus{State: "in_progress"}, nil
 	case takeoutapi.StatusFailed:
-		return &browser.ExportStatus{State: "failed"}, nil
+		return &ExportStatus{State: "failed"}, nil
 	case takeoutapi.StatusExpired:
-		return &browser.ExportStatus{State: "expired"}, nil
+		return &ExportStatus{State: "expired"}, nil
 	default:
-		return &browser.ExportStatus{State: "unknown"}, nil
+		return &ExportStatus{State: "unknown"}, nil
 	}
 }
 
