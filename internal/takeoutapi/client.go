@@ -323,5 +323,15 @@ func (c *Client) CallRPC(ctx context.Context, rpcid, args, version string) ([]by
 			return r.RawJSON, nil
 		}
 	}
-	return nil, fmt.Errorf("rpc %s not found in response", rpcid)
+
+	// No matching wrb.fr chunk — Google likely returned an "er" error chunk
+	// instead. Dump the full body and include a body excerpt in the error so
+	// we can see what went wrong (404 product slug? 401 inside? 500?).
+	dumpPath := dumpResponseBody(fmt.Sprintf("rpc-%s-no-match", rpcid), respBytes)
+	excerpt := string(respBytes)
+	if len(excerpt) > 600 {
+		excerpt = excerpt[:600]
+	}
+	return nil, fmt.Errorf("rpc %s not found in response (full body dumped to %s); body excerpt: %s",
+		rpcid, dumpPath, excerpt)
 }
