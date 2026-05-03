@@ -61,15 +61,14 @@ type CreateExportOptions struct {
 }
 
 // parseExportListResponse extracts Export structs from an fhjYTc response payload.
-// Top-level shape (per 2026-05-02 capture of a completed export):
 //
-//	[ <action-prefix-or-list>,                     # [0]
-//	  [[null, <export-fields>], ...],              # [1] wrapper of exports
-//	  null,                                         # [2]
-//	  "<google-user-id-number>",                    # [3]
-//	  false,                                        # [4]
-//	  [<duplicate of [1] flattened>]                # [5]
-//	]
+// Two top-level shapes observed:
+//   - In-progress: [null, [[null, <fields>], ...], null, "<userId>", false, [...]]
+//     (wrapper at top[1])
+//   - Completed:   [[[null, <fields>], ...], null, null, "<userId>", false, [...]]
+//     (wrapper at top[0])
+//
+// We try both positions and use whichever yields valid exports.
 func parseExportListResponse(raw json.RawMessage) ([]*Export, error) {
 	var top []json.RawMessage
 	if err := json.Unmarshal(raw, &top); err != nil {
@@ -82,9 +81,26 @@ func parseExportListResponse(raw json.RawMessage) ([]*Export, error) {
 	var userID string
 	_ = json.Unmarshal(top[3], &userID) // tolerate absent userID
 
+	// Try wrapper at [0] first (completed format), fall back to [1] (in-progress).
+	for _, idx := range []int{0, 1} {
+		if idx >= len(top) {
+			continue
+		}
+		exports := tryParseWrapper(top[idx], userID)
+		if len(exports) > 0 {
+			return exports, nil
+		}
+	}
+	return nil, nil
+}
+
+// tryParseWrapper attempts to parse the given JSON as `[[null, <fields>], ...]`
+// (the export wrapper shape). Returns nil if it doesn't look like one or
+// produces no valid exports.
+func tryParseWrapper(raw json.RawMessage, userID string) []*Export {
 	var wrapper [][]json.RawMessage
-	if err := json.Unmarshal(top[1], &wrapper); err != nil {
-		return nil, fmt.Errorf("unmarshal wrapper: %w", err)
+	if err := json.Unmarshal(raw, &wrapper); err != nil {
+		return nil
 	}
 
 	var exports []*Export
@@ -93,14 +109,14 @@ func parseExportListResponse(raw json.RawMessage) ([]*Export, error) {
 			continue
 		}
 		exp, err := parseExportFields(w[1])
-		if err != nil {
-			continue // skip malformed
+		if err != nil || exp.UUID == "" {
+			continue
 		}
 		exp.UserID = userID
 		exp.buildDownloadURLs()
 		exports = append(exports, exp)
 	}
-	return exports, nil
+	return exports
 }
 
 // parseExportFields parses one export's positional-indexed fields.

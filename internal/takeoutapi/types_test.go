@@ -54,12 +54,13 @@ func TestParseExportListResponse_InProgress(t *testing.T) {
 }
 
 func TestParseExportListResponse_Complete(t *testing.T) {
-	// Synthetic completed export based on the 2026-05-02 capture:
-	//   - status code 100 at [9]
-	//   - 2 files at [8]
-	//   - completion + expiration timestamps at [23], [24]
-	//   - manifest file at [27]
-	raw := json.RawMessage(`[null,[[null,["ac.t.ta","c250266d-f25e-45d1-a3e1-73b83441cc67","May 1, 2026","May 2, 2026","May 9, 2026",null,565301917378,[],[["takeout-x-001.zip",100,0,null,null,5,null,"",0],["takeout-x-002.zip",200,0,null,null,5,null,"",1]],100,null,false,null,null,["May 1, 2026","11:23 PM","1.2.3.4"],null,null,null,5,null,null,false,1777703002265,1777729531134,1778334331134,null,1,["takeout-manifest-001.zip",50,0,null,null,5,null,"",16],[null,0,true],false]]],null,"109418410415921684377",false,[]]`)
+	// Synthetic completed export based on the 2026-05-02 real capture:
+	//   - top[0] is the wrapper (NOT top[1] like in-progress responses)
+	//   - status code 100 at fields[9]
+	//   - 2 files at fields[8]
+	//   - completion + expiration timestamps at fields[23], fields[24]
+	//   - manifest file at fields[27]
+	raw := json.RawMessage(`[[[null,["ac.t.ta","c250266d-f25e-45d1-a3e1-73b83441cc67","May 1, 2026","May 2, 2026","May 9, 2026",null,565301917378,[],[["takeout-x-001.zip",100,0,null,null,5,null,"",0],["takeout-x-002.zip",200,0,null,null,5,null,"",1]],100,null,false,null,null,["May 1, 2026","11:23 PM","1.2.3.4"],null,null,null,5,null,null,false,1777703002265,1777729531134,1778334331134,null,1,["takeout-manifest-001.zip",50,0,null,null,5,null,"",16],[null,0,true],false]]],null,null,"109418410415921684377",false,[]]`)
 
 	exports, err := parseExportListResponse(raw)
 	if err != nil {
