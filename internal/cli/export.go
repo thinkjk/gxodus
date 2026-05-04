@@ -204,25 +204,32 @@ func formatSize(bytes int64) string {
 
 // defaultProductSlugs returns the canonical product list for a "select all"
 // Takeout export, minus "bond" (Access Log Activity) which is opt-in.
-// Captured 2026-05-02; if Google adds a product, this list will be missing it.
+//
+// Catalog is account-scoped — different accounts surface different products
+// (e.g. fi only appears for Google Fi subscribers; play_console only for Play
+// developers). This list is the union captured 2026-05-04 across two
+// personal accounts. Sending a slug an account doesn't have appears to be
+// silently ignored by Takeout. Re-scrape via the WIZ_global_data block if a
+// Workspace or Fi/Play account surfaces something new.
 func defaultProductSlugs() []string {
 	return []string{
-		"alerts", "analytics", "android", "arts_and_culture", "course_kit",
-		"blogger", "brand_accounts", "calendar", "chrome", "chrome_os",
-		"chrome_web_store", "classroom", "contacts", "discover", "drive",
-		"family", "fiber", "fit", "fitbit", "ai_sandbox", "gemini",
-		"google_account", "google_ads", "my_business", "hangouts_chat",
-		"google_cloud_search", "developer_platform", "earth", "feedback",
-		"google_finance", "support_content", "meet", "google_one", "google_pay",
-		"photos", "books", "play_games_services", "play_movies", "play",
-		"podcasts", "hats_surveys", "shopping", "google_store", "google_wallet",
-		"apps_marketplace", "groups", "home_graph", "keep", "gmail",
-		"manufacturer_center", "maps", "local_actions", "merchant_center",
-		"messages", "my_activity", "nest", "news", "package_tracking",
-		"search_console", "personal_safety", "assisted_calling", "backlight",
-		"pixel_telemetry", "profile", "custom_search", "my_orders", "reminders",
-		"save", "search_ugc", "search_notifications", "streetview", "tasks",
-		"location_history", "voice", "voice_and_audio_activity", "workflows",
+		"ai_sandbox", "alerts", "analytics", "android", "apps_marketplace",
+		"arts_and_culture", "assisted_calling", "backlight", "blogger", "books",
+		"brand_accounts", "calendar", "checkin", "chrome", "chrome_os",
+		"chrome_web_store", "classroom", "contacts", "course_kit", "custom_search",
+		"developer_platform", "discover", "drive", "earth", "family",
+		"feedback", "fi", "fiber", "fit", "fitbit",
+		"gemini", "gmail", "google_account", "google_ads", "google_cloud_search",
+		"google_finance", "google_one", "google_pay", "google_store", "google_wallet",
+		"groups", "hangouts_chat", "hats_surveys", "home_graph", "keep",
+		"local_actions", "location_history", "manufacturer_center", "maps", "meet",
+		"merchant_center", "messages", "my_activity", "my_business", "my_orders",
+		"nest", "news", "package_tracking", "personal_safety", "photos",
+		"pixel_telemetry", "play", "play_console", "play_games_services", "play_movies",
+		"podcasts", "profile", "reminders", "save", "search",
+		"search_console", "search_notifications", "search_ugc", "shopping", "streetview",
+		"support_content", "tasks", "voice", "voice_and_audio_activity", "workflows",
+		"youtube",
 	}
 }
 
