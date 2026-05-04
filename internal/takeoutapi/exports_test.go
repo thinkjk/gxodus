@@ -6,8 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
-	"strings"
 	"testing"
 )
 
@@ -96,7 +96,6 @@ func TestClient_CreateExport_PayloadShape(t *testing.T) {
 		}
 		body, _ := io.ReadAll(r.Body)
 		capturedBody = string(body)
-		// Minimal valid empty response.
 		chunk := `[["wrb.fr","U5lrKc","[\"OK\"]",null,null,null,"generic"]]`
 		_, _ = w.Write([]byte(")]}'\n" + strconv.Itoa(len(chunk)) + "\n" + chunk))
 	}))
@@ -106,25 +105,33 @@ func TestClient_CreateExport_PayloadShape(t *testing.T) {
 	_, err := c.CreateExport(context.Background(), CreateExportOptions{
 		Products:  []string{"drive", "bond"},
 		Format:    "ZIP",
-		SizeBytes: 2 * 1024 * 1024 * 1024, // 2 GB
+		SizeBytes: 2 * 1024 * 1024 * 1024,
 		Frequency: "once",
 	})
 	if err != nil {
 		t.Fatalf("CreateExport: %v", err)
 	}
 
-	// Verify the captured body contains key payload markers.
-	must := []string{
-		`U5lrKc`,
-		`ac.t.st`,
-		`drive`,
-		`bond`,
-		`ZIP`,
-		`2147483648`, // 2 GB in bytes
+	// Pull the inner U5lrKc args JSON back out of the URL-encoded body.
+	form, err := url.ParseQuery(capturedBody)
+	if err != nil {
+		t.Fatalf("parse body: %v", err)
 	}
-	for _, m := range must {
-		if !strings.Contains(capturedBody, m) {
-			t.Errorf("body missing %q: %s", m, capturedBody)
-		}
+	var envelope [][][]interface{}
+	if err := json.Unmarshal([]byte(form.Get("f.req")), &envelope); err != nil {
+		t.Fatalf("unmarshal f.req: %v (raw: %s)", err, form.Get("f.req"))
+	}
+	if len(envelope) != 1 || len(envelope[0]) != 1 || len(envelope[0][0]) != 4 {
+		t.Fatalf("envelope shape unexpected: %#v", envelope)
+	}
+	argsStr, ok := envelope[0][0][1].(string)
+	if !ok {
+		t.Fatalf("args slot is not a string: %#v", envelope[0][0][1])
+	}
+
+	// Assert the captured browser shape: ["ac.t.st", [<inner>]]
+	want := `["ac.t.st",[[["drive"],["bond"]],"ZIP",null,5,null,2147483648,1,null,null,null,"0"]]`
+	if argsStr != want {
+		t.Errorf("U5lrKc args mismatch\n got: %s\nwant: %s", argsStr, want)
 	}
 }

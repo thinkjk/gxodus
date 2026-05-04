@@ -1,96 +1,110 @@
-# U5lrKc Create-Export Debugging State (2026-05-03)
+# U5lrKc Create-Export Debug — RESOLVED 2026-05-04
 
-> **For the next session:** Read this top-to-bottom before doing anything. We're mid-investigation; everything we've ruled out is here so you don't repeat work.
+## Status: fixed pending live verification
 
-## TL;DR
+Captured a working create from a real browser via Playwright MCP and diffed
+against gxodus's request. Root cause was the args shape — we were sending the
+inner positional args flat alongside `"ac.t.st"`, but the real request wraps
+them in a sub-array.
 
-- gxodus has been fully rewritten from chromedp DOM-scraping to HTTP calls against `takeout.google.com/_/TakeoutUi/data/batchexecute`. Reads work end-to-end (list, status, download URLs all validated against real data).
-- The only broken piece: **`U5lrKc` (create export) returns `error code 3` (INVALID_ARGUMENT) with no message**, on every account, every payload variation. Reads (`fhjYTc`) work fine with the same client + cookies + headers.
-- We've exhausted every blind-shot fix. Next step: capture a real working U5lrKc from a browser via **Playwright MCP** (just installed) and diff it against ours.
+## Root cause
 
-## Where to resume
+**Wrong (gxodus before fix):**
 
-User installed Playwright MCP for me to drive a real Chromium and capture the request:
-
-```bash
-claude mcp add playwright -- npx -y @playwright/mcp@latest --headed --user-data-dir=$HOME/.cache/playwright-mcp-profile
+```json
+["ac.t.st", [["drive"]], "ZIP", null, 5, null, 2147483648, 1, null, null, null, "2"]
 ```
 
-Plan:
-1. Use Playwright MCP to open `accounts.google.com` so the user logs in (one time — profile persists).
-2. Navigate to `https://takeout.google.com/`.
-3. Step through the wizard (select products → Next step → set options → Create export).
-4. Use `browser_network_requests` to grab the `U5lrKc` POST — capture URL, headers, body.
-5. Diff vs. our request (request body is dumped to `/config/debug/rpc-U5lrKc-request-*.html` on every gxodus call).
-6. Patch the difference, push, deploy, test.
+**Correct (captured browser request):**
 
-## What we've ruled out (do NOT re-test)
+```json
+["ac.t.st", [[["drive"]], "ZIP", null, 5, null, 2147483648, 1, null, null, null, "0"]]
+```
 
-| Hypothesis | Result | Evidence |
-|---|---|---|
-| Cookie auth (general) | ✓ works | fhjYTc reads succeed |
-| Cookie auth (filter/dedup) | ✓ correct | 40 → 18 cookies, no CookieMismatch |
-| XSRF token (`SNlM0e` / `at`) | ✓ extracted, sent in body | 42-char token, fresh per call |
-| Build label (`cfb2h` / `bl`) | ✓ correct | `boq_identityfrontenduiserver_*` confirmed by spike doc |
-| Session ID (`FdrFJe` / `f.sid`) | ✓ extracted, sent in URL | 64-bit signed integer present |
-| Headers: Origin, Referer, X-Same-Domain, x-goog-ext-525002608-jspb | ✓ all set | per spike + browser captures |
-| **SAPISIDHASH/1PHASH/3PHASH Authorization** | ✓ all 3 sent, **didn't fix it** | computed from SAPISID-family cookies |
-| Multi-block WIZ_global_data picker | ✓ identity block is correct | spike confirms; takeoutui block doesn't exist on the page |
-| Account-has-existing-export conflict | ✗ not the issue | tested on fresh account with 0 exports |
-| Product list invalid | ✗ not the issue | fails with single `["drive"]` too |
-| Positional args bisect (freq=0/1/5, trailing="" /1/2, flag=0/1, format=ZIP/TGZ) | ✗ not the issue | every variation returned same code 3 |
+Two-element outer array — action name and a single inner array — not a flat
+12-element list. The flat form returns `error code 3` (INVALID_ARGUMENT).
 
-## Current code state
+The original 2026-05-02 spike doc documented the args structure as flat —
+that was a misread. Fixed in `internal/takeoutapi/exports.go`
+(`buildCreateExportArgs`). Test `TestClient_CreateExport_PayloadShape` now
+asserts the exact captured shape so this can't regress.
 
-- Branch: `main` (working directly on main per user preference)
-- Last commit: `bdf90ac` "Add SAPISIDHASH auth + debug-tokens/list/create commands"
-- Image: `ghcr.io/thinkjk/gxodus:main` / `sha-bdf90ac` pushed to ghcr
-- Build: clean, `go test ./...` passes
+Trailing constant also changed from `"2"` (guessed) to `"0"` (captured).
 
-## Useful debug commands (already in the binary)
+## Other deltas the browser definitively does not send
 
-Run inside the container as `gxodus <cmd>`:
+While diffing, we also observed the real browser create request does NOT send:
 
-| Command | Purpose |
-|---|---|
-| `gxodus debug-tokens` | Fetch takeout page, dump XSRF/bl/sid/cookies, no rpc call |
-| `gxodus debug-list` | Call fhjYTc, pretty-print exports |
-| `gxodus debug-create --products drive` | Call U5lrKc with simple flags (instead of constructing JSON) |
-| `gxodus debug-create --freq N --flag N --trailing X --format ZIP/TGZ --size BYTES` | Vary individual positional args |
-| `gxodus debug-api --rpcid X --args '[...]' --version generic` | Raw escape hatch for any rpcid |
+- `pageId=none` URL parameter — removed.
+- `Authorization: SAPISIDHASH ...` header — removed (along with the entire
+  `buildSAPISIDHashAuth` helper). Cookies alone are sufficient for both reads
+  and writes; the SAPISIDHASH spike from earlier was a dead end.
 
-Every rpc call also dumps:
-- `/config/debug/takeout-page-*.html` — page HTML (with WIZ_global_data)
-- `/config/debug/rpc-X-request-*.html` — exact URL-encoded request body sent
-- `/config/debug/rpc-X-error-N-*.html` — full response body on any error chunk
+URL params still sent (matched against capture): `rpcids`, `source-path`,
+`f.sid`, `bl`, `hl=en`, `soc-app=1`, `soc-platform=1`, `soc-device=1`,
+`_reqid`, `rt=c`. Headers still sent: `content-type`, `x-same-domain`,
+`origin`, `user-agent`, `accept`, `accept-language`,
+`x-goog-ext-525002608-jspb: [215]`, `referer`.
 
-## Files that matter for this debug
+## Captured request (full evidence)
 
-- `internal/takeoutapi/client.go` — `CallRPC` (lines 251-372ish), `buildSAPISIDHashAuth` (bottom), `ensureTokens` (~line 150)
-- `internal/takeoutapi/exports.go` — `buildCreateExportArgs` (the U5lrKc payload structure)
-- `internal/takeoutapi/xsrf.go` — token extraction from page HTML
-- `internal/cli/debug_api.go` — all the debug-* commands
-- `docs/spikes/2026-05-02-batchexecute-api.md` — protocol notes; spike doc explicitly says U5lrKc response was **never captured** (this is exactly why we're stuck)
+URL:
 
-## What gxodus IS using right now
+```
+POST https://takeout.google.com/_/TakeoutUi/data/batchexecute
+  ?rpcids=U5lrKc
+  &source-path=%2F
+  &f.sid=-6704026795126851156
+  &bl=boq_identityfrontenduiserver_20260429.06_p0
+  &hl=en
+  &soc-app=1
+  &soc-platform=1
+  &soc-device=1
+  &_reqid=670569
+  &rt=c
+```
 
-- Go 1.26, cobra, standard library only for `takeoutapi` (no chromedp at runtime)
-- chromedp v0.15.1 still present for the **auth flow only** (one-time browser login via noVNC, then session cookies are reused for all API calls)
-- Docker container with optional noVNC for ad-hoc re-auth
-- Polls via API (`fhjYTc`) — no chromium spawn per cycle anymore
+Body (URL-decoded):
 
-## Account context
+```
+f.req=[[["U5lrKc","[\"ac.t.st\",[[[\"drive\"]],\"ZIP\",null,5,null,2147483648,1,null,null,null,\"0\"]]",null,"generic"]]]
+&at=ALYeEnl--CbSOt25T1eL-pkUJz5Y:1777862167173
+```
 
-- The account currently authenticated in the gxodus container is a fresh test account with **0 exports** (per `debug-list` output).
-- A different account (used earlier in conversation) has completed exports and was used to validate the download URL formula.
-- User said: "I can only create so many requests" — be respectful of Takeout rate limits when capturing.
+Response (success — 200, single `wrb.fr` chunk):
 
-## Once Playwright capture lands
+```json
+["ac.t.star",
+  ["ac.t.ta",
+   "abc8cb7e-4c9c-40c3-aef7-f1219b8bf946",   // new export UUID
+   "May 3, 2026",
+   null, "", null, 0,
+   [["drive","Drive","https://www.gstatic.com/.../drive_2020q4_32dp.png",
+     null,null,null,null,null,
+     "https://www.gstatic.com/.../drive_2020q4_64dp.png"]],
+   null, 0, null, false, null, null, null, null, null, null,
+   5,                                          // frequency code echoed back
+   null, null, false,
+   1777862268368,                              // creation timestamp (ms)
+   null, 0, null, 1, null, null, true]]
+```
 
-What we need to extract from the captured U5lrKc request:
-- Full request URL (especially any URL params we're missing)
-- All request headers (especially anything we don't already send: `x-goog-batchexecute-bgr`?, `Authorization`?, custom `x-*` headers?)
-- Full request body (the URL-encoded form data — compare `f.req` JSON byte-for-byte with our dumped `/config/debug/rpc-U5lrKc-request-*.html`)
-- The response (so we finally know the success-shape too — handy for `CreateExport` to parse the new export's UUID directly)
+So `U5lrKc` returns the new export UUID at inner-array position [1] —
+`scrapeUUID` already finds this. The action name flips from `ac.t.st`
+(submit) on request to `ac.t.star` (?) on response.
 
-Then patch `internal/takeoutapi/client.go` and/or `internal/takeoutapi/exports.go` to match. Build, push, restart, re-run `gxodus debug-create --products drive` — should succeed.
+## Files changed
+
+- `internal/takeoutapi/exports.go` — `buildCreateExportArgs` now nests inner args.
+- `internal/takeoutapi/client.go` — drop `pageId` URL param, drop
+  `Authorization` header, delete `buildSAPISIDHashAuth` + `cookieValue`,
+  drop `crypto/sha1` and `encoding/hex` imports.
+- `internal/takeoutapi/exports_test.go` — `TestClient_CreateExport_PayloadShape`
+  now asserts exact captured shape (was loose `Contains` checks).
+
+## Verification plan
+
+1. Build and push container image.
+2. Run `gxodus debug-create --products drive` against a fresh account.
+3. Expect: rpc returns success, response contains a UUID, then
+   `gxodus debug-list` shows the new in-progress export.

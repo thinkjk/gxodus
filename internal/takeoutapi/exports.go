@@ -58,8 +58,15 @@ func (c *Client) CreateExport(ctx context.Context, opts CreateExportOptions) (*E
 	return exp, nil
 }
 
-// buildCreateExportArgs constructs the positional args payload for U5lrKc.
-// Positions documented in docs/spikes/2026-05-02-batchexecute-api.md.
+// buildCreateExportArgs constructs the args payload for U5lrKc.
+//
+// Captured 2026-05-03 from a real browser create:
+//
+//	["ac.t.st", [[["drive"]], "ZIP", null, 5, null, 2147483648, 1, null, null, null, "0"]]
+//
+// The inner positional args are nested inside their own array — NOT flattened
+// alongside the "ac.t.st" action name. Sending them flat produces error code
+// 3 (INVALID_ARGUMENT). See docs/spikes/2026-05-03-u5lrkc-debug-state.md.
 func buildCreateExportArgs(opts CreateExportOptions) ([]byte, error) {
 	products := make([][]string, len(opts.Products))
 	for i, p := range opts.Products {
@@ -84,18 +91,18 @@ func buildCreateExportArgs(opts CreateExportOptions) ([]byte, error) {
 		size = 2 * 1024 * 1024 * 1024 // default 2 GB
 	}
 
-	args := []interface{}{
-		"ac.t.st",
+	inner := []interface{}{
 		products,
 		format,
 		nil,
 		freqCode,
 		nil,
 		size,
-		1, // unknown flag — captured value
+		1,
 		nil, nil, nil,
-		"2", // unknown trailing — captured value
+		"0",
 	}
+	args := []interface{}{"ac.t.st", inner}
 	return json.Marshal(args)
 }
 

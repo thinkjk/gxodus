@@ -81,23 +81,29 @@ The `at` parameter is an XSRF token that comes from the page's initial HTML (loo
 
 ### `U5lrKc` create-export args, decoded
 
+> **Corrected 2026-05-04** after re-capture via Playwright MCP (see
+> `2026-05-03-u5lrkc-debug-state.md`). The original 2026-05-02 reading had the
+> inner args flat alongside `"ac.t.st"`; the real shape nests them in their
+> own array. Sending the flat form returns INVALID_ARGUMENT.
+
 ```json
 [
-  "ac.t.st",                            // action name — "takeout submit"
-  [                                      // 2: list of selected products
-    ["alerts"], ["analytics"], ["android"],
-    ["arts_and_culture"], ["course_kit"], ["blogger"],
-    ... ~80 entries, each is [product_slug] ...
-    ["bond"]
-  ],
-  "ZIP",                                 // 3: archive format. "ZIP" | "TGZ"
-  null,                                  // 4: ?
-  5,                                     // 5: frequency code (5 = ?? — needs a TGZ/2-month capture to confirm)
-  null,                                  // 6: ?
-  53687091200,                           // 7: file size in BYTES (50 GB = 50 * 1024^3)
-  1,                                     // 8: flag (split? compression level?)
-  null, null, null,                      // 9-11: ?
-  "2"                                    // 12: schedule code? version?
+  "ac.t.st",                              // [0] action — "takeout submit"
+  [                                       // [1] inner args (own array)
+    [                                     //   [0] selected products
+      ["alerts"], ["analytics"], ["android"],
+      ... ~80 entries, each is [product_slug] ...
+      ["bond"]
+    ],
+    "ZIP",                                //   [1] format. "ZIP" | "TGZ"
+    null,                                 //   [2] ?
+    5,                                    //   [3] frequency: 5 = once
+    null,                                 //   [4] ?
+    2147483648,                           //   [5] max archive size in BYTES
+    1,                                    //   [6] flag
+    null, null, null,                     //   [7-9] ?
+    "0"                                   //   [10] trailing constant
+  ]
 ]
 ```
 
