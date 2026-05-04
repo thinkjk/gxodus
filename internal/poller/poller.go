@@ -10,8 +10,9 @@ import (
 )
 
 type Config struct {
-	Interval time.Duration
-	Cookies  []*http.Cookie
+	Interval   time.Duration
+	Cookies    []*http.Cookie
+	ExportUUID string // the UUID returned by CreateExport — required
 }
 
 type Result struct {
@@ -20,7 +21,7 @@ type Result struct {
 }
 
 // ExportStatus is the parsed Takeout export state, returned by checkOnce.
-// State is one of: "complete", "in_progress", "failed", "expired", "none", "unknown".
+// State is one of: "complete", "in_progress", "failed", "expired", "unknown".
 type ExportStatus struct {
 	State        string
 	DownloadURLs []string
@@ -33,7 +34,11 @@ func Poll(ctx context.Context, cfg Config) (*Result, error) {
 	attempt := 0
 	backoff := cfg.Interval
 
-	fmt.Printf("Polling for export completion every %s...\n", cfg.Interval)
+	if cfg.ExportUUID == "" {
+		return nil, fmt.Errorf("poller: ExportUUID is required (set it from CreateExport's returned UUID)")
+	}
+
+	fmt.Printf("Polling for export %s every %s...\n", cfg.ExportUUID, cfg.Interval)
 
 	for {
 		select {
@@ -75,9 +80,6 @@ func Poll(ctx context.Context, cfg Config) (*Result, error) {
 		case "failed":
 			return nil, fmt.Errorf("export failed")
 
-		case "none":
-			return nil, fmt.Errorf("no export found — was the export initiated?")
-
 		default:
 			fmt.Printf("[%s] Export status: %s\n", time.Now().Format("15:04"), status.State)
 		}
@@ -96,17 +98,18 @@ func checkOnce(ctx context.Context, cfg Config) (*ExportStatus, error) {
 		return nil, fmt.Errorf("creating takeout client: %w", err)
 	}
 
-	exports, err := client.ListExports(ctx)
+	// Look up by UUID rather than picking exports[0]: with stale completed
+	// exports in the account, index 0 may not be the one we just created and
+	// the poller would short-circuit by downloading the wrong archives.
+	e, err := client.GetExport(ctx, cfg.ExportUUID)
 	if err != nil {
-		return nil, fmt.Errorf("listing exports: %w", err)
+		return nil, fmt.Errorf("looking up export %s: %w", cfg.ExportUUID, err)
 	}
-
-	if len(exports) == 0 {
-		return &ExportStatus{State: "none"}, nil
+	if e == nil {
+		// Google hasn't indexed it in fhjYTc yet — treat as in-progress so we
+		// keep polling. (Newly-created exports take a few seconds to appear.)
+		return &ExportStatus{State: "in_progress"}, nil
 	}
-
-	// Most recent is index 0 (Google sorts newest first in the UI).
-	e := exports[0]
 
 	switch e.Status {
 	case takeoutapi.StatusComplete:

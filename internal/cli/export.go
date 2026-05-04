@@ -117,6 +117,12 @@ var exportCmd = &cobra.Command{
 			notify.Fire(cfg.Notify, "error", notify.EventData{Error: err.Error()})
 			os.Exit(2)
 		}
+		if newExport.UUID == "" {
+			err := fmt.Errorf("CreateExport returned no UUID — cannot track new export. Response shape may have changed; check rpc-U5lrKc-* dumps in /config/debug")
+			fmt.Fprintln(os.Stderr, err)
+			notify.Fire(cfg.Notify, "error", notify.EventData{Error: err.Error()})
+			os.Exit(2)
+		}
 
 		fmt.Printf("Export submitted (uuid=%s)\n", newExport.UUID)
 		notify.Fire(cfg.Notify, "export_started", notify.EventData{})
@@ -128,8 +134,9 @@ var exportCmd = &cobra.Command{
 		}
 
 		pollResult, err := poller.Poll(ctx, poller.Config{
-			Interval: pollDuration,
-			Cookies:  cookies,
+			Interval:   pollDuration,
+			Cookies:    cookies,
+			ExportUUID: newExport.UUID,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Poll failed: %v\n", err)
