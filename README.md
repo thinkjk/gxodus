@@ -70,6 +70,19 @@ on_export_complete = "ntfy publish gxodus 'Export done: {{.OutputPath}}'"
 on_error = "ntfy publish gxodus 'Export failed: {{.Error}}'"
 ```
 
+For Pushover, you can use the built-in destination instead of (or alongside) shell hooks:
+
+```toml
+[notify.pushover]
+token    = "<your app token>"
+user_key = "<your user key>"
+# events  = ["auth_expired", "export_complete", "error"]   # default; "export_started" is opt-in
+```
+
+When configured, gxodus posts a notification to the Pushover API for each event in `events`. `auth_expired` fires when a Takeout download is blocked on a re-auth challenge — open noVNC at `<container>:6080/vnc.html` and complete the password prompt to unblock it.
+
+The hostname in the notification text comes from `os.Hostname()`; override with `GXODUS_PUBLIC_HOSTNAME` if your container hostname differs from the LAN address you'd type into a browser.
+
 ### Notification hooks
 
 Shell commands executed on events. Template variables:
