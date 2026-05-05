@@ -92,11 +92,23 @@ A small interface (e.g. `takeoutClient`) replaces the direct
 `takeoutapi.NewClient` call so the per-account isolation behavior is
 unit-testable.
 
+**`docker-entrypoint.sh`** — the auth-failure recovery branch now reads
+`$CONFIG_DIR/.failed-accounts` after an exit-1 from `gxodus export`. For
+each email in that file: wipe `$CONFIG_DIR/accounts/<email>/session.enc`,
+then run `gxodus auth --account <email>` (each one separately, with
+`AUTH_RETRY` between). If `.failed-accounts` is missing on exit-1
+(defensive), fall back to wiping the single account if exactly one
+exists, or aborting with a clear log message if 2+ exist (manual
+intervention required). After processing all failed accounts, deletes
+the `.failed-accounts` file so the next cycle starts clean.
+
 **New CLI commands:**
 
-- `gxodus auth` — refresh whichever single existing account is
-  configured. Errors if 0 or 2+ accounts exist (use `--new` or
-  `--account`).
+- `gxodus auth` (no flag) — behavior depends on existing account count:
+  - **0 accounts:** behaves as `--new` (initial setup convenience).
+  - **1 account:** refreshes that single account (uses its profile).
+  - **2+ accounts:** errors with "use `--new` to add an account or
+    `--account <email>` to refresh".
 - `gxodus auth --new` — add a new account. Spawns chromium with a fresh
   temp profile (no existing account's profile), extracts email after
   login, creates `accounts/<email>/`.
