@@ -271,7 +271,22 @@ func fireAuthExpired(cfg config.NotifyConfig) {
 	notify.Fire(cfg, "auth_expired", notify.EventData{})
 }
 
-// waitForChallengeResolved is implemented in Task 7. Stub for now.
+// waitForChallengeResolved polls the active page URL once per 5 seconds
+// until the host returns to takeout.google.com. No timeout — the user may
+// take hours/days to clear the challenge via noVNC.
 func waitForChallengeResolved(ctx context.Context) error {
-	return fmt.Errorf("waitForChallengeResolved not implemented in Task 6 — see Task 7")
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			challenged, currentURL := atChallengePage(ctx)
+			if !challenged {
+				fmt.Printf("Challenge resolved — back on takeout.google.com (URL: %s)\n", currentURL)
+				return nil
+			}
+		}
+	}
 }
