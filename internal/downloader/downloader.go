@@ -184,7 +184,11 @@ func downloadOne(ctx context.Context, url string, index int, tmpDir, outputDir s
 	case filename = <-began:
 		// happy path
 	case <-time.After(10 * time.Second):
-		if challenged, currentURL := atChallengePage(ctx); challenged {
+		challenged, currentURL, err := atChallengePage(ctx)
+		if err != nil {
+			return "", 0, fmt.Errorf("after 10s with no download, page-location query failed: %w", err)
+		}
+		if challenged {
 			fmt.Printf("Download blocked on re-auth challenge (current URL: %s)\n", currentURL)
 			fmt.Println("Open noVNC at <container-host>:6080/vnc.html and complete the password challenge.")
 			fireAuthExpired(notifyCfg)
@@ -201,7 +205,7 @@ func downloadOne(ctx context.Context, url string, index int, tmpDir, outputDir s
 				return "", 0, ctx.Err()
 			}
 		} else {
-			return "", 0, fmt.Errorf("no download began within 10s and not on a challenge page")
+			return "", 0, fmt.Errorf("no download began within 10s and not on a challenge page (current URL: %s)", currentURL)
 		}
 	case <-ctx.Done():
 		return "", 0, ctx.Err()
@@ -253,17 +257,17 @@ func verifyArchive(path string) bool {
 // looks like a Google sign-in / re-auth challenge page. Other states
 // (about:blank, takeout.google.com, in-progress navigation) are not
 // challenges — those mean "download didn't start for some other reason".
-func atChallengePage(ctx context.Context) (bool, string) {
+func atChallengePage(ctx context.Context) (bool, string, error) {
 	var currentURL string
 	if err := chromedp.Run(ctx, chromedp.Location(&currentURL)); err != nil {
-		return false, ""
+		return false, "", fmt.Errorf("querying page location: %w", err)
 	}
 	if strings.Contains(currentURL, "://accounts.google.com/") ||
 		strings.Contains(currentURL, "/signin/") ||
 		strings.Contains(currentURL, "/challenge/") {
-		return true, currentURL
+		return true, currentURL, nil
 	}
-	return false, currentURL
+	return false, currentURL, nil
 }
 
 // fireAuthExpired calls into the notify package without import cycle.
@@ -282,7 +286,10 @@ func waitForChallengeResolved(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			challenged, currentURL := atChallengePage(ctx)
+			challenged, currentURL, err := atChallengePage(ctx)
+			if err != nil {
+				return fmt.Errorf("polling page location: %w", err)
+			}
 			if !challenged {
 				fmt.Printf("Challenge resolved — back on takeout.google.com (URL: %s)\n", currentURL)
 				return nil
