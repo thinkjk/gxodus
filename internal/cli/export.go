@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -133,6 +134,11 @@ var exportCmd = &cobra.Command{
 				Frequency: cfg.Frequency,
 			})
 			if err != nil {
+				if errors.Is(err, takeoutapi.ErrSessionExpired) {
+					fmt.Fprintln(os.Stderr, "Session expired — cookies are stale and need re-auth via noVNC.")
+					notify.Fire(cfg.Notify, "auth_expired", notify.EventData{Error: err.Error()})
+					os.Exit(1)
+				}
 				fmt.Fprintf(os.Stderr, "CreateExport failed: %v\n", err)
 				notify.Fire(cfg.Notify, "error", notify.EventData{Error: err.Error()})
 				os.Exit(2)
@@ -166,6 +172,11 @@ var exportCmd = &cobra.Command{
 			ExportUUID: trackUUID,
 		})
 		if err != nil {
+			if errors.Is(err, takeoutapi.ErrSessionExpired) {
+				fmt.Fprintln(os.Stderr, "Session expired — cookies are stale and need re-auth via noVNC.")
+				notify.Fire(cfg.Notify, "auth_expired", notify.EventData{Error: err.Error()})
+				os.Exit(1)
+			}
 			fmt.Fprintf(os.Stderr, "Poll failed: %v\n", err)
 			notify.Fire(cfg.Notify, "error", notify.EventData{Error: err.Error()})
 			os.Exit(3)

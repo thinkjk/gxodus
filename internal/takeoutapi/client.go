@@ -2,6 +2,7 @@ package takeoutapi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,11 @@ import (
 	"sync/atomic"
 	"time"
 )
+
+// ErrSessionExpired is returned by ensureTokens when the takeout page request
+// gets redirected to a Google sign-in URL. The caller should treat this as
+// "cookies are stale; user must re-auth" — DO NOT retry with backoff.
+var ErrSessionExpired = errors.New("takeout session expired (redirected to Google sign-in)")
 
 // Client makes batchexecute calls against takeout.google.com using session
 // cookies extracted by gxodus's auth flow. Safe for concurrent use.
@@ -165,6 +171,12 @@ func (c *Client) ensureTokens(ctx context.Context) error {
 	fmt.Fprintf(os.Stderr, "[takeoutapi]   content-type: %s\n", resp.Header.Get("Content-Type"))
 	fmt.Fprintf(os.Stderr, "[takeoutapi]   content-length header: %s\n", resp.Header.Get("Content-Length"))
 	fmt.Fprintf(os.Stderr, "[takeoutapi]   set-cookie count: %d\n", len(resp.Header.Values("Set-Cookie")))
+
+	finalURL := resp.Request.URL.String()
+	if strings.Contains(finalURL, "://accounts.google.com/") ||
+		strings.Contains(finalURL, "/signin/") {
+		return fmt.Errorf("%w: final URL was %s", ErrSessionExpired, finalURL)
+	}
 
 	html, err := io.ReadAll(resp.Body)
 	if err != nil {

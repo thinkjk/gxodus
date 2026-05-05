@@ -2,6 +2,7 @@ package poller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -49,6 +50,9 @@ func Poll(ctx context.Context, cfg Config) (*Result, error) {
 
 		status, err := checkOnce(ctx, cfg)
 		if err != nil {
+			if errors.Is(err, takeoutapi.ErrSessionExpired) {
+				return nil, err
+			}
 			attempt++
 			backoff = nextBackoff(backoff, cfg.Interval)
 			fmt.Printf("Poll error (attempt %d, retrying in %s): %v\n", attempt, backoff, err)
