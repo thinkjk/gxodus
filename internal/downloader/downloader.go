@@ -139,15 +139,135 @@ func resetTmpDir(dir string) error {
 	return os.MkdirAll(dir, 0755)
 }
 
-// downloadOne is implemented in Task 6. Stub for now so Task 5's test
-// can compile and (intentionally) fail at runtime.
+// downloadOne navigates to one download URL and waits for the file to land
+// in tmpDir, then moves it to outputDir. Detects re-auth challenges by
+// watching for the URL host to drift away from takeout.google.com after a
+// 10s grace period; when that happens, fires auth_expired and blocks until
+// the user completes the challenge via noVNC.
 func downloadOne(ctx context.Context, url string, index int, tmpDir, outputDir string, notifyCfg config.NotifyConfig) (string, int64, error) {
-	// Suppress unused import warnings until Task 6 implements this.
-	_ = sync.Mutex{}
-	_ = notify.EventData{}
-	_ = bytes.NewReader
-	_ = io.EOF
-	_ = strings.Contains
-	_ = time.Now
-	return "", 0, fmt.Errorf("downloadOne not implemented in Task 5 — see Task 6")
+	type downloadResult struct {
+		filename string
+		size     int64
+		err      error
+	}
+	done := make(chan downloadResult, 1)
+	began := make(chan string, 1) // filename when download begins
+
+	var once sync.Once
+	chromedp.ListenBrowser(ctx, func(ev interface{}) {
+		switch e := ev.(type) {
+		case *cdpbrowser.EventDownloadWillBegin:
+			once.Do(func() { began <- e.SuggestedFilename })
+		case *cdpbrowser.EventDownloadProgress:
+			switch e.State {
+			case cdpbrowser.DownloadProgressStateCompleted:
+				done <- downloadResult{size: int64(e.TotalBytes)}
+			case cdpbrowser.DownloadProgressStateCanceled:
+				done <- downloadResult{err: fmt.Errorf("download canceled by browser")}
+			}
+		}
+	})
+
+	// Navigate to the URL. If the server triggers a download immediately,
+	// chromium aborts the page load with ERR_ABORTED — ignore that specific
+	// error; we'll still receive download events.
+	if err := chromedp.Run(ctx, chromedp.Navigate(url)); err != nil {
+		if !strings.Contains(err.Error(), "net::ERR_ABORTED") {
+			return "", 0, fmt.Errorf("navigating to download URL: %w", err)
+		}
+	}
+
+	// Race: download starts within 10s, OR we landed off-takeout (challenge),
+	// OR context cancels.
+	var filename string
+	select {
+	case filename = <-began:
+		// happy path
+	case <-time.After(10 * time.Second):
+		if challenged, currentURL := atChallengePage(ctx); challenged {
+			fmt.Printf("Download blocked on re-auth challenge (current URL: %s)\n", currentURL)
+			fmt.Println("Open noVNC at <container-host>:6080/vnc.html and complete the password challenge.")
+			fireAuthExpired(notifyCfg)
+			if err := waitForChallengeResolved(ctx); err != nil {
+				return "", 0, err
+			}
+			// After challenge, the browser usually proceeds to the download
+			// automatically. Wait again for the began event.
+			select {
+			case filename = <-began:
+			case <-time.After(60 * time.Second):
+				return "", 0, fmt.Errorf("no download began after challenge resolved")
+			case <-ctx.Done():
+				return "", 0, ctx.Err()
+			}
+		} else {
+			return "", 0, fmt.Errorf("no download began within 10s and not on a challenge page")
+		}
+	case <-ctx.Done():
+		return "", 0, ctx.Err()
+	}
+
+	// Now wait for completion. 5-minute stall timeout.
+	var result downloadResult
+	select {
+	case result = <-done:
+		if result.err != nil {
+			return "", 0, result.err
+		}
+	case <-time.After(5 * time.Minute):
+		return "", 0, fmt.Errorf("download stalled (no completion event in 5m)")
+	case <-ctx.Done():
+		return "", 0, ctx.Err()
+	}
+
+	// Move file from tmpDir to outputDir.
+	src := filepath.Join(tmpDir, filename)
+	dst := filepath.Join(outputDir, filename)
+	if err := os.Rename(src, dst); err != nil {
+		return "", 0, fmt.Errorf("moving %s to %s: %w", src, dst, err)
+	}
+
+	// Magic-bytes safety check — chromedp downloads should always be archives,
+	// but if Google ever serves a 200 OK with HTML body, catch it.
+	if !verifyArchive(dst) {
+		_ = os.Remove(dst)
+		return "", 0, fmt.Errorf("downloaded file %s does not have zip/gzip magic", dst)
+	}
+
+	return dst, result.size, nil
+}
+
+// verifyArchive opens path and checks the first 4 bytes against magic.
+func verifyArchive(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	head := make([]byte, 4)
+	n, _ := io.ReadFull(f, head)
+	return looksLikeArchive(head[:n])
+}
+
+// atChallengePage queries the active page URL and returns true if its host
+// is anything other than takeout.google.com (i.e., we got redirected).
+func atChallengePage(ctx context.Context) (bool, string) {
+	var currentURL string
+	if err := chromedp.Run(ctx, chromedp.Location(&currentURL)); err != nil {
+		return false, ""
+	}
+	if strings.Contains(currentURL, "://takeout.google.com/") {
+		return false, currentURL
+	}
+	return true, currentURL
+}
+
+// fireAuthExpired calls into the notify package without import cycle.
+func fireAuthExpired(cfg config.NotifyConfig) {
+	notify.Fire(cfg, "auth_expired", notify.EventData{})
+}
+
+// waitForChallengeResolved is implemented in Task 7. Stub for now.
+func waitForChallengeResolved(ctx context.Context) error {
+	return fmt.Errorf("waitForChallengeResolved not implemented in Task 6 — see Task 7")
 }

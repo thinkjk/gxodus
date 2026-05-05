@@ -39,7 +39,6 @@ func TestDownload_HappyPath_OneFile(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/zip")
 		w.Header().Set("Content-Disposition", `attachment; filename="hello.zip"`)
-		w.Header().Set("Content-Length", "2")
 		_, _ = io.Copy(w, bytes.NewReader(zipBytes))
 	}))
 	defer srv.Close()
