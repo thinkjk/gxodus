@@ -173,7 +173,7 @@ var exportCmd = &cobra.Command{
 
 		// Download archives
 		resolvedOutput := cfg.ResolveOutputDir()
-		dlResult, err := downloader.Download(pollResult.DownloadURLs, resolvedOutput, cookies)
+		dlResult, err := downloader.Download(ctx, pollResult.DownloadURLs, resolvedOutput, cookies, cfg.Notify)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Download failed: %v\n", err)
 			notify.Fire(cfg.Notify, "error", notify.EventData{Error: err.Error()})
