@@ -30,8 +30,9 @@ the existing `internal/browser` package (which already has `NewContext`,
 treats the container as a known device, so most downloads will not trigger
 a fresh challenge. When a challenge does appear, the browser (which is already running
 headed against the container's Xvfb display) is visible via noVNC, fires
-the `auth_expired` notify hook (reusing the user's Pushover setup), and
-blocks indefinitely until the URL leaves the challenge page.
+the `auth_expired` notify event (which now triggers both the user's shell
+hook and a built-in Pushover message — see the Pushover section below),
+and blocks indefinitely until the URL leaves the challenge page.
 
 ## Architecture
 
@@ -133,6 +134,57 @@ prior runs are discarded.
 | Per-URL download loop | Integration test using `httptest.Server` that serves a tiny real ZIP with proper headers. chromedp navigates to it, verify the file appears in the output dir with correct content. Tagged `//go:build integration` so CI can skip if Chrome isn't available. |
 | Challenge detection | Same `httptest.Server` — return a 302 to a fake "sign-in" path, verify the detector triggers, fires the notify hook (captured by stub), and unblocks once we redirect back. Same integration tag. |
 | End-to-end against real Google | Manual: `gxodus debug-download <uuid>` (new helper command) skips create+poll and exercises the download path against a known UUID. User runs in the container, verifies real >GB archives. |
+
+## Pushover integration
+
+The existing notify system fires user-configured shell commands per event
+(`on_auth_expired`, `on_export_complete`, etc.). To meet the user's stated
+need for Pushover-on-challenge without forcing them to assemble a curl
+command, add a built-in Pushover destination as a parallel channel.
+
+**Config:**
+
+```toml
+[notify.pushover]
+token    = "<app token>"
+user_key = "<user key>"
+# events = ["auth_expired", "export_complete", "error"]   # default
+```
+
+If `token` and `user_key` are both set, gxodus posts to
+`https://api.pushover.net/1/messages.json` (form-encoded) for every event
+listed in `events`. `events` defaults to the list above — `export_started`
+is opt-in only because it's noisy on a 180-day cycle. Messages are
+hard-coded in v1 (no user-configurable templates); the bracketed
+substitutions below are filled by the code from `EventData`/runtime:
+
+| Event | Title | Message |
+|---|---|---|
+| `auth_expired` | gxodus: re-auth needed | `Open noVNC at {host}:6080/vnc.html and complete the password challenge.` |
+| `export_complete` | gxodus: export ready | `Downloaded {size} to {path}.` |
+| `error` | gxodus: error | `{error}` |
+| `export_started` | gxodus: export started | `New Takeout submitted (uuid={uuid}).` |
+
+`{host}` resolves to `os.Hostname()` by default, overridable via
+`GXODUS_PUBLIC_HOSTNAME` env var (useful when the container hostname
+differs from the LAN address the user types into a browser).
+
+**Code shape:**
+
+- New file `internal/notify/pushover.go` — single function
+  `sendPushover(cfg PushoverConfig, title, message string) error` that
+  POSTs to the Pushover API with a 10s timeout. No retries; Pushover's
+  reliability is on Pushover.
+- `notify.Fire` extended: after the existing shell-hook dispatch, if
+  `cfg.Pushover.Token != ""` and the event is in `cfg.Pushover.Events`,
+  call `sendPushover` with the baked-in title/message for that event.
+  Errors logged to stderr, never propagated (notifications must not
+  block exports).
+- `internal/config/config.go` gains `PushoverConfig` struct and the
+  `events` field. Defaults applied in `config.Load`.
+
+Pushover and shell hooks coexist independently — users can have either,
+both, or neither. No deprecation or migration of `on_*` keys.
 
 ## Out of scope
 
