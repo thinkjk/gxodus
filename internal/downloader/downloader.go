@@ -153,17 +153,17 @@ func downloadOne(ctx context.Context, url string, index int, tmpDir, outputDir s
 	done := make(chan downloadResult, 1)
 	began := make(chan string, 1) // filename when download begins
 
-	var once sync.Once
+	var beganOnce, doneOnce sync.Once
 	chromedp.ListenTarget(ctx, func(ev interface{}) {
 		switch e := ev.(type) {
 		case *cdpbrowser.EventDownloadWillBegin:
-			once.Do(func() { began <- e.SuggestedFilename })
+			beganOnce.Do(func() { began <- e.SuggestedFilename })
 		case *cdpbrowser.EventDownloadProgress:
 			switch e.State {
 			case cdpbrowser.DownloadProgressStateCompleted:
-				done <- downloadResult{size: int64(e.TotalBytes)}
+				doneOnce.Do(func() { done <- downloadResult{size: int64(e.TotalBytes)} })
 			case cdpbrowser.DownloadProgressStateCanceled:
-				done <- downloadResult{err: fmt.Errorf("download canceled by browser")}
+				doneOnce.Do(func() { done <- downloadResult{err: fmt.Errorf("download canceled by browser")} })
 			}
 		}
 	})
