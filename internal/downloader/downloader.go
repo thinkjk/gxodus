@@ -58,6 +58,18 @@ func isLikelyHTML(path string) bool {
 	return false
 }
 
+// clearStaleProfileLock removes Chromium's SingletonLock / SingletonCookie /
+// SingletonSocket files from the persistent profile dir. These are symlinks
+// whose target encodes the hostname + pid of the chromium that created them.
+// When the container is recreated, the hostname rotates and Chromium refuses
+// to start ("profile in use by another Chromium process on another computer").
+// Wiping these is safe: a healthy chromium recreates them on startup.
+func clearStaleProfileLock(profileDir string) {
+	for _, name := range []string{"SingletonLock", "SingletonCookie", "SingletonSocket"} {
+		_ = os.Remove(filepath.Join(profileDir, name))
+	}
+}
+
 func extractFilename(url string, index int) string {
 	parts := strings.Split(url, "/")
 	for i := len(parts) - 1; i >= 0; i-- {
@@ -93,6 +105,8 @@ func Download(ctx context.Context, urls []string, outputDir string, cookies []*h
 	if err := resetTmpDir(tmpDir); err != nil {
 		return nil, err
 	}
+
+	clearStaleProfileLock(browser.ProfileDir())
 
 	bctx, cancel, err := browser.NewContext(ctx, browser.Options{
 		Headless:    false, // headed via container's Xvfb so noVNC can show challenges
