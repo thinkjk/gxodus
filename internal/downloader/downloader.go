@@ -6,11 +6,21 @@ package downloader
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
+
+	cdpbrowser "github.com/chromedp/cdproto/browser"
+	"github.com/chromedp/chromedp"
+	"github.com/thinkjk/gxodus/internal/browser"
+	"github.com/thinkjk/gxodus/internal/config"
+	"github.com/thinkjk/gxodus/internal/notify"
 )
 
 // archive magic bytes — what real downloads should start with.
@@ -69,4 +79,75 @@ func extractFilename(url string, index int) string {
 type Result struct {
 	Files     []string
 	TotalSize int64
+}
+
+// Download fetches Takeout archives via chromedp into outputDir.
+// cookies is the authenticated Google session; notifyCfg is used to fire
+// auth_expired (Pushover + shell hook) when a re-auth challenge appears.
+func Download(ctx context.Context, urls []string, outputDir string, cookies []*http.Cookie, notifyCfg config.NotifyConfig) (*Result, error) {
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return nil, fmt.Errorf("creating output dir: %w", err)
+	}
+
+	tmpDir := filepath.Join(config.ConfigDir(), "downloads-tmp")
+	if err := resetTmpDir(tmpDir); err != nil {
+		return nil, err
+	}
+
+	bctx, cancel, err := browser.NewContext(ctx, browser.Options{
+		Headless:    false, // headed via container's Xvfb so noVNC can show challenges
+		UserDataDir: browser.ProfileDir(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("opening chromedp context: %w", err)
+	}
+	defer cancel()
+
+	// Force a navigation so the chromedp context has an active target before
+	// we inject cookies (cookies are scoped per-target / browser-wide via CDP).
+	if err := chromedp.Run(bctx, chromedp.Navigate("about:blank")); err != nil {
+		return nil, fmt.Errorf("opening blank page: %w", err)
+	}
+
+	if err := browser.InjectCookies(bctx, cookies); err != nil {
+		return nil, fmt.Errorf("injecting cookies: %w", err)
+	}
+
+	if err := chromedp.Run(bctx, cdpbrowser.SetDownloadBehavior(cdpbrowser.SetDownloadBehaviorBehaviorAllow).
+		WithDownloadPath(tmpDir).
+		WithEventsEnabled(true)); err != nil {
+		return nil, fmt.Errorf("setting download behavior: %w", err)
+	}
+
+	var result Result
+	for i, u := range urls {
+		path, size, err := downloadOne(bctx, u, i, tmpDir, outputDir, notifyCfg)
+		if err != nil {
+			return &result, fmt.Errorf("downloading %s: %w", u, err)
+		}
+		result.Files = append(result.Files, path)
+		result.TotalSize += size
+	}
+	return &result, nil
+}
+
+// resetTmpDir wipes any abandoned partials from prior runs.
+func resetTmpDir(dir string) error {
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("clearing tmp dir: %w", err)
+	}
+	return os.MkdirAll(dir, 0755)
+}
+
+// downloadOne is implemented in Task 6. Stub for now so Task 5's test
+// can compile and (intentionally) fail at runtime.
+func downloadOne(ctx context.Context, url string, index int, tmpDir, outputDir string, notifyCfg config.NotifyConfig) (string, int64, error) {
+	// Suppress unused import warnings until Task 6 implements this.
+	_ = sync.Mutex{}
+	_ = notify.EventData{}
+	_ = bytes.NewReader
+	_ = io.EOF
+	_ = strings.Contains
+	_ = time.Now
+	return "", 0, fmt.Errorf("downloadOne not implemented in Task 5 — see Task 6")
 }
