@@ -72,6 +72,25 @@ func clearStaleProfileLock(profileDir string) {
 	}
 }
 
+// formatBytes returns a human-readable size string.
+func formatBytes(b int64) string {
+	const (
+		kb = 1024
+		mb = 1024 * kb
+		gb = 1024 * mb
+	)
+	switch {
+	case b >= gb:
+		return fmt.Sprintf("%.2f GB", float64(b)/float64(gb))
+	case b >= mb:
+		return fmt.Sprintf("%.2f MB", float64(b)/float64(mb))
+	case b >= kb:
+		return fmt.Sprintf("%.2f KB", float64(b)/float64(kb))
+	default:
+		return fmt.Sprintf("%d B", b)
+	}
+}
+
 func extractFilename(url string, index int) string {
 	parts := strings.Split(url, "/")
 	for i := len(parts) - 1; i >= 0; i-- {
@@ -170,16 +189,47 @@ func downloadOne(ctx context.Context, url string, index int, tmpDir, outputDir s
 	began := make(chan string, 1) // filename when download begins
 
 	var beganOnce, doneOnce sync.Once
+	var (
+		currentFilename string
+		lastLogPct      float64
+		lastLogTime     time.Time
+	)
 	chromedp.ListenTarget(ctx, func(ev interface{}) {
 		switch e := ev.(type) {
 		case *cdpbrowser.EventDownloadWillBegin:
-			beganOnce.Do(func() { began <- e.SuggestedFilename })
+			beganOnce.Do(func() {
+				currentFilename = e.SuggestedFilename
+				fmt.Printf("Download started: %s (URL: %s)\n", e.SuggestedFilename, e.URL)
+				began <- e.SuggestedFilename
+			})
 		case *cdpbrowser.EventDownloadProgress:
 			switch e.State {
+			case cdpbrowser.DownloadProgressStateInProgress:
+				if e.TotalBytes > 0 {
+					pct := (e.ReceivedBytes / e.TotalBytes) * 100
+					now := time.Now()
+					if pct-lastLogPct >= 5 || now.Sub(lastLogTime) >= 30*time.Second {
+						fmt.Printf("  %s: %.0f%% (%s / %s)\n",
+							currentFilename,
+							pct,
+							formatBytes(int64(e.ReceivedBytes)),
+							formatBytes(int64(e.TotalBytes)))
+						lastLogPct = pct
+						lastLogTime = now
+					}
+				}
 			case cdpbrowser.DownloadProgressStateCompleted:
-				doneOnce.Do(func() { done <- downloadResult{size: int64(e.TotalBytes)} })
+				doneOnce.Do(func() {
+					fmt.Printf("Download completed: %s (%s)\n",
+						currentFilename,
+						formatBytes(int64(e.TotalBytes)))
+					done <- downloadResult{size: int64(e.TotalBytes)}
+				})
 			case cdpbrowser.DownloadProgressStateCanceled:
-				doneOnce.Do(func() { done <- downloadResult{err: fmt.Errorf("download canceled by browser")} })
+				doneOnce.Do(func() {
+					fmt.Printf("Download CANCELED by browser: %s\n", currentFilename)
+					done <- downloadResult{err: fmt.Errorf("download canceled by browser")}
+				})
 			}
 		}
 	})
