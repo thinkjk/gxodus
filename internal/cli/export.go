@@ -107,14 +107,25 @@ var exportCmd = &cobra.Command{
 			return fmt.Errorf("file size: %w", err)
 		}
 
+		// Resolve which export to track. Precedence:
+		//   1. --export-uuid flag (explicit recovery override)
+		//   2. /config/pending_export.uuid (auto-resume on container restart)
+		//   3. fresh CreateExport (normal scheduled run)
 		var trackUUID string
-		if resumeUUID != "" {
-			// Resume mode: skip CreateExport and poll an existing in-flight
-			// export by UUID. Useful when a previous run was interrupted or
-			// the export was created out-of-band (e.g. via the web UI).
-			fmt.Printf("Resuming export (uuid=%s) — skipping CreateExport.\n", resumeUUID)
+		switch {
+		case resumeUUID != "":
+			fmt.Printf("Resuming export (uuid=%s, --export-uuid flag) — skipping CreateExport.\n", resumeUUID)
 			trackUUID = resumeUUID
-		} else {
+		default:
+			if persisted, err := readPendingExport(); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not read pending-export marker: %v\n", err)
+			} else if persisted != "" {
+				fmt.Printf("Resuming export (uuid=%s, found %s) — skipping CreateExport.\n", persisted, pendingExportPath())
+				trackUUID = persisted
+			}
+		}
+
+		if trackUUID == "" {
 			newExport, err := client.CreateExport(ctx, takeoutapi.CreateExportOptions{
 				Products:  products,
 				Format:    strings.ToUpper(cfg.FileType),
@@ -134,6 +145,12 @@ var exportCmd = &cobra.Command{
 			}
 			trackUUID = newExport.UUID
 			fmt.Printf("Export submitted (uuid=%s)\n", trackUUID)
+
+			// Persist UUID so a container restart mid-poll resumes this
+			// export instead of submitting yet another full backup.
+			if err := writePendingExport(trackUUID); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not persist pending-export marker: %v (restart will create a new export)\n", err)
+			}
 		}
 		notify.Fire(cfg.Notify, "export_started", notify.EventData{})
 
@@ -164,6 +181,12 @@ var exportCmd = &cobra.Command{
 		}
 
 		fmt.Printf("Downloaded %d file(s), total size: %s\n", len(dlResult.Files), formatSize(dlResult.TotalSize))
+
+		// Download succeeded — clear the resume marker so the next scheduled
+		// run creates a fresh export instead of re-downloading this one.
+		if err := clearPendingExport(); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not clear pending-export marker: %v (next run may try to resume %s)\n", err, trackUUID)
+		}
 
 		// Extract if requested
 		if cfg.Extract {
