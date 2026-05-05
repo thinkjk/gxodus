@@ -154,7 +154,7 @@ func downloadOne(ctx context.Context, url string, index int, tmpDir, outputDir s
 	began := make(chan string, 1) // filename when download begins
 
 	var once sync.Once
-	chromedp.ListenBrowser(ctx, func(ev interface{}) {
+	chromedp.ListenTarget(ctx, func(ev interface{}) {
 		switch e := ev.(type) {
 		case *cdpbrowser.EventDownloadWillBegin:
 			once.Do(func() { began <- e.SuggestedFilename })
@@ -249,17 +249,21 @@ func verifyArchive(path string) bool {
 	return looksLikeArchive(head[:n])
 }
 
-// atChallengePage queries the active page URL and returns true if its host
-// is anything other than takeout.google.com (i.e., we got redirected).
+// atChallengePage queries the active page URL and returns true ONLY if it
+// looks like a Google sign-in / re-auth challenge page. Other states
+// (about:blank, takeout.google.com, in-progress navigation) are not
+// challenges — those mean "download didn't start for some other reason".
 func atChallengePage(ctx context.Context) (bool, string) {
 	var currentURL string
 	if err := chromedp.Run(ctx, chromedp.Location(&currentURL)); err != nil {
 		return false, ""
 	}
-	if strings.Contains(currentURL, "://takeout.google.com/") {
-		return false, currentURL
+	if strings.Contains(currentURL, "://accounts.google.com/") ||
+		strings.Contains(currentURL, "/signin/") ||
+		strings.Contains(currentURL, "/challenge/") {
+		return true, currentURL
 	}
-	return true, currentURL
+	return false, currentURL
 }
 
 // fireAuthExpired calls into the notify package without import cycle.
