@@ -7,6 +7,7 @@ package downloader
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	cdpbrowser "github.com/chromedp/cdproto/browser"
@@ -238,10 +240,12 @@ func downloadOne(ctx context.Context, url string, index int, tmpDir, outputDir s
 		return "", 0, ctx.Err()
 	}
 
-	// Move file from tmpDir to outputDir.
+	// Move file from tmpDir to outputDir. Use moveFile (not os.Rename
+	// directly) to handle cross-filesystem cases — common when /config and
+	// the output dir are on different docker volumes.
 	src := filepath.Join(tmpDir, filename)
 	dst := filepath.Join(outputDir, filename)
-	if err := os.Rename(src, dst); err != nil {
+	if err := moveFile(src, dst); err != nil {
 		return "", 0, fmt.Errorf("moving %s to %s: %w", src, dst, err)
 	}
 
@@ -265,6 +269,39 @@ func verifyArchive(path string) bool {
 	head := make([]byte, 4)
 	n, _ := io.ReadFull(f, head)
 	return looksLikeArchive(head[:n])
+}
+
+// moveFile renames src to dst, falling back to copy+delete when rename fails
+// with EXDEV (src and dst are on different filesystems). Common in
+// containers where /config and /exports are bind-mounted from different
+// host paths.
+func moveFile(src, dst string) error {
+	if err := os.Rename(src, dst); err == nil {
+		return nil
+	} else if !errors.Is(err, syscall.EXDEV) {
+		return err
+	}
+
+	in, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("opening source for cross-device copy: %w", err)
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return fmt.Errorf("creating destination for cross-device copy: %w", err)
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		_ = os.Remove(dst)
+		return fmt.Errorf("cross-device copy: %w", err)
+	}
+	if err := out.Close(); err != nil {
+		_ = os.Remove(dst)
+		return fmt.Errorf("closing destination after cross-device copy: %w", err)
+	}
+	return os.Remove(src)
 }
 
 // atChallengePage queries the active page URL and returns true ONLY if it

@@ -1,6 +1,7 @@
 package downloader
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -74,5 +75,30 @@ func TestExtractFilename(t *testing.T) {
 		// shape ok — looks like takeout-YYYY-MM-DD-NNN.zip
 	} else {
 		t.Errorf("extractFilename fallback shape wrong: %q", got)
+	}
+}
+
+func TestMoveFile_SameFilesystem(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.bin")
+	dst := filepath.Join(dir, "dst.bin")
+
+	want := []byte("hello world")
+	if err := os.WriteFile(src, want, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := moveFile(src, dst); err != nil {
+		t.Fatalf("moveFile: %v", err)
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("reading dst: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("dst content mismatch: got %q, want %q", got, want)
+	}
+	if _, err := os.Stat(src); !os.IsNotExist(err) {
+		t.Errorf("src should be gone, stat err = %v", err)
 	}
 }
