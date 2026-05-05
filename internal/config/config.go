@@ -9,11 +9,18 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
+type PushoverConfig struct {
+	Token   string   `toml:"token"`
+	UserKey string   `toml:"user_key"`
+	Events  []string `toml:"events"`
+}
+
 type NotifyConfig struct {
-	OnAuthExpired   string `toml:"on_auth_expired"`
-	OnExportStarted string `toml:"on_export_started"`
-	OnExportComplete string `toml:"on_export_complete"`
-	OnError         string `toml:"on_error"`
+	OnAuthExpired    string         `toml:"on_auth_expired"`
+	OnExportStarted  string         `toml:"on_export_started"`
+	OnExportComplete string         `toml:"on_export_complete"`
+	OnError          string         `toml:"on_error"`
+	Pushover         PushoverConfig `toml:"pushover"`
 }
 
 type Config struct {
@@ -38,6 +45,11 @@ func DefaultConfig() *Config {
 		FileType:     "zip",
 		Frequency:    "once",
 		ActivityLogs: true,
+		Notify: NotifyConfig{
+			Pushover: PushoverConfig{
+				Events: []string{"auth_expired", "export_complete", "error"},
+			},
+		},
 	}
 }
 

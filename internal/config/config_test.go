@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -115,5 +116,44 @@ func TestDefaultConfigExportOptions(t *testing.T) {
 	}
 	if !c.ActivityLogs {
 		t.Errorf("ActivityLogs: got false want true")
+	}
+}
+
+func TestPushoverConfigDefaults(t *testing.T) {
+	cfg := DefaultConfig()
+	wantEvents := []string{"auth_expired", "export_complete", "error"}
+	if !reflect.DeepEqual(cfg.Notify.Pushover.Events, wantEvents) {
+		t.Errorf("Pushover.Events = %v, want %v", cfg.Notify.Pushover.Events, wantEvents)
+	}
+	if cfg.Notify.Pushover.Token != "" {
+		t.Errorf("Token should default empty, got %q", cfg.Notify.Pushover.Token)
+	}
+}
+
+func TestPushoverConfigParseTOML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	body := `
+[notify.pushover]
+token = "abc123"
+user_key = "uk456"
+events = ["auth_expired", "error"]
+`
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Notify.Pushover.Token != "abc123" {
+		t.Errorf("Token = %q", cfg.Notify.Pushover.Token)
+	}
+	if cfg.Notify.Pushover.UserKey != "uk456" {
+		t.Errorf("UserKey = %q", cfg.Notify.Pushover.UserKey)
+	}
+	wantEvents := []string{"auth_expired", "error"}
+	if !reflect.DeepEqual(cfg.Notify.Pushover.Events, wantEvents) {
+		t.Errorf("Events = %v, want %v", cfg.Notify.Pushover.Events, wantEvents)
 	}
 }
