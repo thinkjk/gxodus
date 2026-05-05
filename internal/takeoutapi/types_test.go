@@ -114,6 +114,44 @@ func TestParseExportListResponse_Complete(t *testing.T) {
 	}
 }
 
+func TestParseExportListResponse_Mixed(t *testing.T) {
+	// Real-world shape captured 2026-05-04: completed export wrapper at top[0]
+	// AND in-progress export wrapper at top[1]. Earlier parser short-circuited
+	// on top[0] and silently dropped the in-progress one — caller's UUID
+	// lookup then returned nil and the poller stayed in_progress forever.
+	completedFields := `["ac.t.ta","comp1111-1111-1111-1111-111111111111","May 1, 2026","May 2, 2026","May 9, 2026",null,500,[],[["c-001.zip",100,0,null,null,5,null,"",0]],100,null,false,null,null,["May 1, 2026","11:23 PM","1.2.3.4"],null,null,null,5,null,null,false,1777703002265,1777729531134,1778334331134,null,1,null,[null,0,true],false]`
+	inProgressFields := `["ac.t.ta","prog2222-2222-2222-2222-222222222222","May 4, 2026",null,"",null,123,[],[],0,null,false,null,null,["May 4, 2026","2:00 PM","1.2.3.4"],null,null,null,5,null,null,false,1777768027572,null,0,null,1,null,[null,0,true],true]`
+
+	raw := json.RawMessage(`[[[null,` + completedFields + `]],[[null,` + inProgressFields + `]],null,"my-user",false,[]]`)
+
+	exports, err := parseExportListResponse(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(exports) != 2 {
+		t.Fatalf("got %d exports, want 2", len(exports))
+	}
+
+	byUUID := map[string]*Export{}
+	for _, e := range exports {
+		byUUID[e.UUID] = e
+	}
+	completed, ok := byUUID["comp1111-1111-1111-1111-111111111111"]
+	if !ok {
+		t.Fatal("completed export missing from result")
+	}
+	if completed.Status != StatusComplete {
+		t.Errorf("completed.Status = %v, want StatusComplete", completed.Status)
+	}
+	inProgress, ok := byUUID["prog2222-2222-2222-2222-222222222222"]
+	if !ok {
+		t.Fatal("in-progress export missing from result — this is the regression")
+	}
+	if inProgress.Status != StatusInProgress {
+		t.Errorf("inProgress.Status = %v, want StatusInProgress", inProgress.Status)
+	}
+}
+
 func TestMapStatusCode(t *testing.T) {
 	cases := map[int]ExportStatus{
 		0:   StatusInProgress,

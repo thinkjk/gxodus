@@ -62,13 +62,14 @@ type CreateExportOptions struct {
 
 // parseExportListResponse extracts Export structs from an fhjYTc response payload.
 //
-// Two top-level shapes observed:
-//   - In-progress: [null, [[null, <fields>], ...], null, "<userId>", false, [...]]
-//     (wrapper at top[1])
-//   - Completed:   [[[null, <fields>], ...], null, null, "<userId>", false, [...]]
-//     (wrapper at top[0])
+// Wrappers can appear at top[0] AND top[1]:
+//   - top[0]: completed exports (when present)
+//   - top[1]: in-progress exports (when present)
 //
-// We try both positions and use whichever yields valid exports.
+// Mixed accounts (some completed, some in-progress) populate both. We must
+// merge — earlier code returned only the first non-empty wrapper, which
+// silently dropped in-progress exports whenever a completed one existed.
+// Dedup by UUID in case Google ever lists the same export in both wrappers.
 func parseExportListResponse(raw json.RawMessage) ([]*Export, error) {
 	var top []json.RawMessage
 	if err := json.Unmarshal(raw, &top); err != nil {
@@ -81,17 +82,21 @@ func parseExportListResponse(raw json.RawMessage) ([]*Export, error) {
 	var userID string
 	_ = json.Unmarshal(top[3], &userID) // tolerate absent userID
 
-	// Try wrapper at [0] first (completed format), fall back to [1] (in-progress).
+	seen := map[string]bool{}
+	var exports []*Export
 	for _, idx := range []int{0, 1} {
 		if idx >= len(top) {
 			continue
 		}
-		exports := tryParseWrapper(top[idx], userID)
-		if len(exports) > 0 {
-			return exports, nil
+		for _, exp := range tryParseWrapper(top[idx], userID) {
+			if seen[exp.UUID] {
+				continue
+			}
+			seen[exp.UUID] = true
+			exports = append(exports, exp)
 		}
 	}
-	return nil, nil
+	return exports, nil
 }
 
 // tryParseWrapper attempts to parse the given JSON as `[[null, <fields>], ...]`
