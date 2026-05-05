@@ -8,14 +8,17 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/thinkjk/gxodus/internal/auth"
+	"github.com/thinkjk/gxodus/internal/config"
+	"github.com/thinkjk/gxodus/internal/downloader"
 	"github.com/thinkjk/gxodus/internal/takeoutapi"
 )
 
 var (
-	debugRpcid   string
-	debugArgs    string
-	debugVersion string
-	debugUserIdx int
+	debugRpcid       string
+	debugArgs        string
+	debugVersion     string
+	debugUserIdx     int
+	debugDownloadUUID string
 )
 
 var debugAPICmd = &cobra.Command{
@@ -159,6 +162,59 @@ var debugCreateCmd = &cobra.Command{
 	},
 }
 
+var debugDownloadCmd = &cobra.Command{
+	Use:    "debug-download",
+	Short:  "Skip create+poll and download a known-complete export by UUID",
+	Hidden: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx := cmd.Context()
+
+		cfg, err := config.Load(cfgFile)
+		if err != nil {
+			return fmt.Errorf("loading config: %w", err)
+		}
+
+		if !auth.SessionExists() {
+			return fmt.Errorf("no saved session — run 'gxodus auth' first")
+		}
+		cookies, err := auth.LoadSession()
+		if err != nil {
+			return fmt.Errorf("loading session: %w", err)
+		}
+
+		client, err := takeoutapi.NewClient(cookies, debugUserIdx)
+		if err != nil {
+			return err
+		}
+		exp, err := client.GetExport(ctx, debugDownloadUUID)
+		if err != nil {
+			return fmt.Errorf("looking up export: %w", err)
+		}
+		if exp == nil {
+			return fmt.Errorf("export %s not found", debugDownloadUUID)
+		}
+		if exp.Status != takeoutapi.StatusComplete {
+			return fmt.Errorf("export %s not complete (status=%v)", debugDownloadUUID, exp.Status)
+		}
+		if len(exp.DownloadURLs) == 0 {
+			return fmt.Errorf("export %s has no download URLs", debugDownloadUUID)
+		}
+
+		fmt.Printf("Downloading %d archive(s) for %s to %s\n",
+			len(exp.DownloadURLs), exp.UUID, cfg.ResolveOutputDir())
+
+		res, err := downloader.Download(ctx, exp.DownloadURLs, cfg.ResolveOutputDir(), cookies, cfg.Notify)
+		if err != nil {
+			return fmt.Errorf("download failed: %w", err)
+		}
+		fmt.Printf("Downloaded %d file(s), total %d bytes:\n", len(res.Files), res.TotalSize)
+		for _, p := range res.Files {
+			fmt.Printf("  %s\n", p)
+		}
+		return nil
+	},
+}
+
 // newDebugClient loads the saved session and constructs a client. Shared by
 // every debug-* command so they all behave identically wrt session loading.
 func newDebugClient(userIdx int) (*takeoutapi.Client, error) {
@@ -199,4 +255,9 @@ func init() {
 	debugCreateCmd.Flags().StringVar(&debugCreateTrailing, "trailing", "2", `the unknown trailing positional value`)
 	debugCreateCmd.Flags().IntVar(&debugUserIdx, "user", 0, "Google account index (0 = primary)")
 	rootCmd.AddCommand(debugCreateCmd)
+
+	// debug-download
+	debugDownloadCmd.Flags().StringVar(&debugDownloadUUID, "uuid", "", "UUID of an existing complete export")
+	_ = debugDownloadCmd.MarkFlagRequired("uuid")
+	rootCmd.AddCommand(debugDownloadCmd)
 }
