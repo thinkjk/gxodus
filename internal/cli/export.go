@@ -24,6 +24,7 @@ var (
 	fileType       string
 	frequency      string
 	noActivityLogs bool
+	resumeUUID     string
 )
 
 var exportCmd = &cobra.Command{
@@ -106,25 +107,34 @@ var exportCmd = &cobra.Command{
 			return fmt.Errorf("file size: %w", err)
 		}
 
-		newExport, err := client.CreateExport(ctx, takeoutapi.CreateExportOptions{
-			Products:  products,
-			Format:    strings.ToUpper(cfg.FileType),
-			SizeBytes: sizeBytes,
-			Frequency: cfg.Frequency,
-		})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "CreateExport failed: %v\n", err)
-			notify.Fire(cfg.Notify, "error", notify.EventData{Error: err.Error()})
-			os.Exit(2)
+		var trackUUID string
+		if resumeUUID != "" {
+			// Resume mode: skip CreateExport and poll an existing in-flight
+			// export by UUID. Useful when a previous run was interrupted or
+			// the export was created out-of-band (e.g. via the web UI).
+			fmt.Printf("Resuming export (uuid=%s) — skipping CreateExport.\n", resumeUUID)
+			trackUUID = resumeUUID
+		} else {
+			newExport, err := client.CreateExport(ctx, takeoutapi.CreateExportOptions{
+				Products:  products,
+				Format:    strings.ToUpper(cfg.FileType),
+				SizeBytes: sizeBytes,
+				Frequency: cfg.Frequency,
+			})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "CreateExport failed: %v\n", err)
+				notify.Fire(cfg.Notify, "error", notify.EventData{Error: err.Error()})
+				os.Exit(2)
+			}
+			if newExport.UUID == "" {
+				err := fmt.Errorf("CreateExport returned no UUID — cannot track new export. Response shape may have changed; check rpc-U5lrKc-* dumps in /config/debug")
+				fmt.Fprintln(os.Stderr, err)
+				notify.Fire(cfg.Notify, "error", notify.EventData{Error: err.Error()})
+				os.Exit(2)
+			}
+			trackUUID = newExport.UUID
+			fmt.Printf("Export submitted (uuid=%s)\n", trackUUID)
 		}
-		if newExport.UUID == "" {
-			err := fmt.Errorf("CreateExport returned no UUID — cannot track new export. Response shape may have changed; check rpc-U5lrKc-* dumps in /config/debug")
-			fmt.Fprintln(os.Stderr, err)
-			notify.Fire(cfg.Notify, "error", notify.EventData{Error: err.Error()})
-			os.Exit(2)
-		}
-
-		fmt.Printf("Export submitted (uuid=%s)\n", newExport.UUID)
 		notify.Fire(cfg.Notify, "export_started", notify.EventData{})
 
 		// Poll for completion
@@ -136,7 +146,7 @@ var exportCmd = &cobra.Command{
 		pollResult, err := poller.Poll(ctx, poller.Config{
 			Interval:   pollDuration,
 			Cookies:    cookies,
-			ExportUUID: newExport.UUID,
+			ExportUUID: trackUUID,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Poll failed: %v\n", err)
@@ -187,6 +197,7 @@ func init() {
 	exportCmd.Flags().StringVar(&fileType, "file-type", "", "archive type (zip, tgz)")
 	exportCmd.Flags().StringVar(&frequency, "frequency", "", "export frequency (once, every_2_months)")
 	exportCmd.Flags().BoolVar(&noActivityLogs, "no-activity-logs", false, "skip the Access Log Activity item (off by default in Google UI; gxodus selects it by default)")
+	exportCmd.Flags().StringVar(&resumeUUID, "export-uuid", "", "skip CreateExport and resume polling an existing export by UUID (recovery flag)")
 	rootCmd.AddCommand(exportCmd)
 }
 
