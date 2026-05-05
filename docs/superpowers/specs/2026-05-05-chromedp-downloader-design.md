@@ -28,10 +28,10 @@ Replace the HTTP downloader entirely with a chromedp implementation. Reuse
 the existing `internal/browser` package (which already has `NewContext`,
 `InjectCookies`, and `ProfileDir`). The persistent profile means Google
 treats the container as a known device, so most downloads will not trigger
-a fresh challenge. When a challenge does appear, the browser switches to
-headed mode (visible via noVNC), fires the `auth_expired` notify hook
-(reusing the user's Pushover setup), and blocks indefinitely until the
-URL leaves the challenge page.
+a fresh challenge. When a challenge does appear, the browser (which is already running
+headed against the container's Xvfb display) is visible via noVNC, fires
+the `auth_expired` notify hook (reusing the user's Pushover setup), and
+blocks indefinitely until the URL leaves the challenge page.
 
 ## Architecture
 
@@ -50,10 +50,13 @@ the new `notifyCfg` argument threaded through. No new packages.
 Three pieces inside `downloader.go`:
 
 1. **Browser bootstrap.** Open a chromedp context with `browser.ProfileDir()`
-   and `Headless=true`. Inject the saved session cookies. Configure CDP
-   `Browser.setDownloadBehavior` to drop files into a known temp dir at
-   `$CONFIG_DIR/downloads-tmp/`. Empty that dir first so abandoned partials
-   from a previous container don't confuse us.
+   and `Headless=false` (the container's Xvfb is already up 24/7 for the
+   auth flow's noVNC session, so headed costs nothing extra and means a
+   challenge is immediately visible without a context swap). Inject the
+   saved session cookies. Configure CDP `Browser.setDownloadBehavior` to
+   drop files into a known temp dir at `$CONFIG_DIR/downloads-tmp/`. Empty
+   that dir first so abandoned partials from a previous container don't
+   confuse us.
 
 2. **Per-URL download loop.** For each URL: navigate, listen for CDP
    `Browser.downloadProgress` events. On `downloadWillBegin` log the
@@ -65,8 +68,8 @@ Three pieces inside `downloader.go`:
 3. **Challenge detector.** After navigating, race three outcomes for ~10s:
    (a) `downloadWillBegin` event — happy path; (b) URL still off
    `takeout.google.com` — challenge; (c) navigation error — bubble up. On
-   challenge: switch the chromedp context to headed mode (so noVNC shows
-   it), fire `auth_expired` notify, log the noVNC URL, then block on
+   challenge: the headed browser is already visible via noVNC, so just
+   fire `auth_expired` notify, log the noVNC URL, then block on
    chromedp's URL-watch action until the URL host returns to
    `takeout.google.com`. No timeout: Google's URLs stay valid for ~7 days
    and the user has noVNC + pushover.
@@ -79,7 +82,7 @@ poller returns []DownloadURLs (e.g. 5 URLs for a 4.46 GB export)
          ▼
 Download(urls, outputDir, cookies, notifyCfg)
   ├── ensure $CONFIG_DIR/downloads-tmp/ exists, empty
-  ├── browser.NewContext(headless=true, UserDataDir=ProfileDir())
+  ├── browser.NewContext(headless=false, UserDataDir=ProfileDir())
   ├── InjectCookies(sessionCookies)
   ├── CDP: setDownloadBehavior(allow, downloadPath=tmp)
   │
@@ -95,8 +98,7 @@ Download(urls, outputDir, cookies, notifyCfg)
        │         → magic-bytes check (defense-in-depth)
        │         → append to result.Files
        │
-       └── if B → switch ctx to headed mode (so noVNC shows it)
-                → notify.Fire("auth_expired", {...})
+       └── if B → notify.Fire("auth_expired", {...})
                 → log: "Download blocked on re-auth challenge —
                        open noVNC at <ip>:6080/vnc.html"
                 → wait until current URL host == takeout.google.com
