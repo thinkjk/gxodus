@@ -79,6 +79,14 @@ user_key = "<your user key>"
 # events  = ["auth_expired", "export_complete", "error"]   # default; "export_started" is opt-in
 ```
 
+You can also set these via environment variables — useful for Unraid template fields or docker-compose `environment:` blocks (env vars override config.toml when both are set):
+
+| Env var                   | Maps to                       |
+|---------------------------|-------------------------------|
+| `GXODUS_PUSHOVER_TOKEN`   | `[notify.pushover].token`     |
+| `GXODUS_PUSHOVER_USER_KEY`| `[notify.pushover].user_key`  |
+| `GXODUS_PUSHOVER_EVENTS`  | `[notify.pushover].events` (comma-separated, e.g. `auth_expired,error`) |
+
 When configured, gxodus posts a notification to the Pushover API for each event in `events`. `auth_expired` fires when a Takeout download is blocked on a re-auth challenge — open noVNC at `<container>:6080/vnc.html` and complete the password prompt to unblock it.
 
 The hostname in the notification text comes from `os.Hostname()`; override with `GXODUS_PUBLIC_HOSTNAME` if your container hostname differs from the LAN address you'd type into a browser.

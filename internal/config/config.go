@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
@@ -90,6 +91,8 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
 
+	applyPushoverEnvOverrides(&cfg.Notify.Pushover)
+
 	return cfg, nil
 }
 
@@ -114,4 +117,29 @@ func homeDir() string {
 		return "."
 	}
 	return home
+}
+
+// applyPushoverEnvOverrides lets users configure Pushover via env vars
+// (Unraid template fields, docker-compose environment, etc.) without
+// editing config.toml. Non-empty env vars override TOML values.
+func applyPushoverEnvOverrides(p *PushoverConfig) {
+	if v := os.Getenv("GXODUS_PUSHOVER_TOKEN"); v != "" {
+		p.Token = v
+	}
+	if v := os.Getenv("GXODUS_PUSHOVER_USER_KEY"); v != "" {
+		p.UserKey = v
+	}
+	if v := os.Getenv("GXODUS_PUSHOVER_EVENTS"); v != "" {
+		parts := strings.Split(v, ",")
+		out := make([]string, 0, len(parts))
+		for _, e := range parts {
+			e = strings.TrimSpace(e)
+			if e != "" {
+				out = append(out, e)
+			}
+		}
+		if len(out) > 0 {
+			p.Events = out
+		}
+	}
 }

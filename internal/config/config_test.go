@@ -157,3 +157,63 @@ events = ["auth_expired", "error"]
 		t.Errorf("Events = %v, want %v", cfg.Notify.Pushover.Events, wantEvents)
 	}
 }
+
+func TestPushoverEnvOverrides(t *testing.T) {
+	t.Setenv("GXODUS_PUSHOVER_TOKEN", "env-token")
+	t.Setenv("GXODUS_PUSHOVER_USER_KEY", "env-user")
+	t.Setenv("GXODUS_PUSHOVER_EVENTS", "auth_expired, error,export_complete ")
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	body := `
+[notify.pushover]
+token = "toml-token"
+user_key = "toml-user"
+events = ["only-from-toml"]
+`
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.Notify.Pushover.Token != "env-token" {
+		t.Errorf("Token = %q, want env-token", cfg.Notify.Pushover.Token)
+	}
+	if cfg.Notify.Pushover.UserKey != "env-user" {
+		t.Errorf("UserKey = %q, want env-user", cfg.Notify.Pushover.UserKey)
+	}
+	wantEvents := []string{"auth_expired", "error", "export_complete"}
+	if !reflect.DeepEqual(cfg.Notify.Pushover.Events, wantEvents) {
+		t.Errorf("Events = %v, want %v", cfg.Notify.Pushover.Events, wantEvents)
+	}
+}
+
+func TestPushoverEnvOverrides_EmptyVarsPreserveTOML(t *testing.T) {
+	t.Setenv("GXODUS_PUSHOVER_TOKEN", "")
+	t.Setenv("GXODUS_PUSHOVER_USER_KEY", "")
+	t.Setenv("GXODUS_PUSHOVER_EVENTS", "")
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	body := `
+[notify.pushover]
+token = "toml-token"
+user_key = "toml-user"
+events = ["from-toml"]
+`
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Notify.Pushover.Token != "toml-token" {
+		t.Errorf("Token = %q, want toml-token", cfg.Notify.Pushover.Token)
+	}
+}
