@@ -13,6 +13,10 @@ import (
 
 const pushoverAPIURL = "https://api.pushover.net/1/messages.json"
 
+// pushoverEndpointOverride redirects Fire's Pushover POST to a different
+// URL. Set by tests; "" in production means use pushoverAPIURL.
+var pushoverEndpointOverride string
+
 // sendPushover posts a message to the Pushover API. No retries; logging
 // errors at the call site is sufficient. Returns nil if cfg has no token
 // (caller may pass a zero-value config defensively).

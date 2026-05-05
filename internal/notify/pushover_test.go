@@ -5,7 +5,10 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/thinkjk/gxodus/internal/config"
 )
@@ -59,4 +62,63 @@ func TestSendPushover_ErrorOnNon2xx(t *testing.T) {
 	if !strings.Contains(err.Error(), "400") {
 		t.Errorf("error should mention status 400: %v", err)
 	}
+}
+
+func TestFire_FiresPushoverForListedEvents(t *testing.T) {
+	var hits int32
+	var mu sync.Mutex
+	captured := map[string]url.Values{}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		mu.Lock()
+		captured[r.PostForm.Get("title")] = r.PostForm
+		mu.Unlock()
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	pushoverEndpointOverride = srv.URL
+	defer func() { pushoverEndpointOverride = "" }()
+
+	cfg := config.NotifyConfig{
+		Pushover: config.PushoverConfig{
+			Token:   "tk",
+			UserKey: "uk",
+			Events:  []string{"auth_expired", "error"},
+		},
+	}
+
+	// auth_expired is in events list — should fire.
+	Fire(cfg, "auth_expired", EventData{})
+	// export_started is NOT in events list — should be skipped.
+	Fire(cfg, "export_started", EventData{})
+	// error is in events list — should fire.
+	Fire(cfg, "error", EventData{Error: "boom"})
+
+	// Fire spawns goroutines; give them a tick.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && atomic.LoadInt32(&hits) < 2 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := atomic.LoadInt32(&hits); got != 2 {
+		t.Errorf("Pushover hits = %d, want 2", got)
+	}
+	mu.Lock()
+	if _, ok := captured["gxodus: re-auth needed"]; !ok {
+		t.Errorf("missing auth_expired notification; captured titles: %v", keysOf(captured))
+	}
+	if v := captured["gxodus: error"]; v.Get("message") != "boom" {
+		t.Errorf("error message = %q, want boom", v.Get("message"))
+	}
+	mu.Unlock()
+}
+
+func keysOf(m map[string]url.Values) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
