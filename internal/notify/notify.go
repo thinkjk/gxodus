@@ -12,6 +12,7 @@ import (
 )
 
 type EventData struct {
+	Account    string  // Google account email this event relates to (empty for global events)
 	Error      string
 	OutputPath string
 	ExportSize int64
@@ -99,19 +100,23 @@ func pushoverMessageFor(event string, data EventData) (title, message string) {
 			host = "the gxodus container"
 		}
 	}
+	suffix := ""
+	if data.Account != "" {
+		suffix = " [" + data.Account + "]"
+	}
 	switch event {
 	case "auth_expired":
-		return "gxodus: re-auth needed",
+		return "gxodus: re-auth needed" + suffix,
 			fmt.Sprintf("Open noVNC at %s:6080/vnc.html and complete the password challenge.", host)
 	case "export_complete":
-		return "gxodus: export ready",
+		return "gxodus: export ready" + suffix,
 			fmt.Sprintf("Downloaded %d bytes to %s.", data.ExportSize, data.OutputPath)
 	case "error":
-		return "gxodus: error", data.Error
+		return "gxodus: error" + suffix, data.Error
 	case "export_started":
-		return "gxodus: export started", "New Takeout submitted."
+		return "gxodus: export started" + suffix, "New Takeout submitted."
 	}
-	return "gxodus", event
+	return "gxodus" + suffix, event
 }
 
 func renderTemplate(tmpl string, data EventData) (string, error) {

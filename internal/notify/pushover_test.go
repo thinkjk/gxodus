@@ -122,3 +122,45 @@ func keysOf(m map[string]url.Values) []string {
 	}
 	return out
 }
+
+func TestFire_PushoverTitleIncludesAccount(t *testing.T) {
+	var captured url.Values
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		mu.Lock()
+		captured = r.PostForm
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	pushoverEndpointOverride = srv.URL
+	defer func() { pushoverEndpointOverride = "" }()
+
+	cfg := config.NotifyConfig{
+		Pushover: config.PushoverConfig{
+			Token:   "tk",
+			UserKey: "uk",
+			Events:  []string{"auth_expired"},
+		},
+	}
+	Fire(cfg, "auth_expired", EventData{Account: "jason@example.com"})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		ok := captured.Get("title") != ""
+		mu.Unlock()
+		if ok {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	got := captured.Get("title")
+	if got != "gxodus: re-auth needed [jason@example.com]" {
+		t.Errorf("title = %q, want includes [jason@example.com]", got)
+	}
+}
