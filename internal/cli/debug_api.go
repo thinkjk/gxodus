@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/thinkjk/gxodus/internal/accounts"
 	"github.com/thinkjk/gxodus/internal/auth"
 	"github.com/thinkjk/gxodus/internal/config"
 	"github.com/thinkjk/gxodus/internal/downloader"
@@ -14,11 +15,12 @@ import (
 )
 
 var (
-	debugRpcid       string
-	debugArgs        string
-	debugVersion     string
-	debugUserIdx     int
+	debugRpcid        string
+	debugArgs         string
+	debugVersion      string
+	debugUserIdx      int
 	debugDownloadUUID string
+	debugAccount      string
 )
 
 var debugAPICmd = &cobra.Command{
@@ -174,10 +176,18 @@ var debugDownloadCmd = &cobra.Command{
 			return fmt.Errorf("loading config: %w", err)
 		}
 
-		if !auth.SessionExists() {
-			return fmt.Errorf("no saved session — run 'gxodus auth' first")
+		all, err := accounts.ScanAccounts()
+		if err != nil {
+			return fmt.Errorf("scanning accounts: %w", err)
 		}
-		cookies, err := auth.LoadSession()
+		acct, err := pickSingleAccount(all, debugAccount)
+		if err != nil {
+			return err
+		}
+		if !acct.HasSession {
+			return fmt.Errorf("account %s has no session.enc", acct.Email)
+		}
+		cookies, err := auth.LoadSession(acct.Dir)
 		if err != nil {
 			return fmt.Errorf("loading session: %w", err)
 		}
@@ -203,7 +213,7 @@ var debugDownloadCmd = &cobra.Command{
 		fmt.Printf("Downloading %d archive(s) for %s to %s\n",
 			len(exp.DownloadURLs), exp.UUID, cfg.ResolveOutputDir())
 
-		res, err := downloader.Download(ctx, exp.DownloadURLs, cfg.ResolveOutputDir(), cookies, cfg.Notify)
+		res, err := downloader.Download(ctx, exp.DownloadURLs, cfg.ResolveOutputDir(), cookies, cfg.Notify, acct.Dir)
 		if err != nil {
 			return fmt.Errorf("download failed: %w", err)
 		}
@@ -218,10 +228,18 @@ var debugDownloadCmd = &cobra.Command{
 // newDebugClient loads the saved session and constructs a client. Shared by
 // every debug-* command so they all behave identically wrt session loading.
 func newDebugClient(userIdx int) (*takeoutapi.Client, error) {
-	if !auth.SessionExists() {
-		return nil, fmt.Errorf("no saved session — run 'gxodus auth' first")
+	all, err := accounts.ScanAccounts()
+	if err != nil {
+		return nil, fmt.Errorf("scanning accounts: %w", err)
 	}
-	cookies, err := auth.LoadSession()
+	acct, err := pickSingleAccount(all, debugAccount)
+	if err != nil {
+		return nil, err
+	}
+	if !acct.HasSession {
+		return nil, fmt.Errorf("account %s has no session.enc", acct.Email)
+	}
+	cookies, err := auth.LoadSession(acct.Dir)
 	if err != nil {
 		return nil, fmt.Errorf("loading session: %w", err)
 	}
@@ -234,15 +252,18 @@ func init() {
 	debugAPICmd.Flags().StringVar(&debugArgs, "args", "[]", "rpc args as JSON string")
 	debugAPICmd.Flags().StringVar(&debugVersion, "version", "generic", `rpc version, "generic" or "1"`)
 	debugAPICmd.Flags().IntVar(&debugUserIdx, "user", 0, "Google account index (0 = primary)")
+	debugAPICmd.Flags().StringVar(&debugAccount, "account", "", "target a specific account by email")
 	_ = debugAPICmd.MarkFlagRequired("rpcid")
 	rootCmd.AddCommand(debugAPICmd)
 
 	// debug-tokens
 	debugTokensCmd.Flags().IntVar(&debugUserIdx, "user", 0, "Google account index (0 = primary)")
+	debugTokensCmd.Flags().StringVar(&debugAccount, "account", "", "target a specific account by email")
 	rootCmd.AddCommand(debugTokensCmd)
 
 	// debug-list
 	debugListCmd.Flags().IntVar(&debugUserIdx, "user", 0, "Google account index (0 = primary)")
+	debugListCmd.Flags().StringVar(&debugAccount, "account", "", "target a specific account by email")
 	rootCmd.AddCommand(debugListCmd)
 
 	// debug-create — defaults match the values from the 2026-05-02 spike capture
@@ -254,10 +275,12 @@ func init() {
 	debugCreateCmd.Flags().IntVar(&debugCreateFlag, "flag", 1, `the unknown "1" positional flag`)
 	debugCreateCmd.Flags().StringVar(&debugCreateTrailing, "trailing", "2", `the unknown trailing positional value`)
 	debugCreateCmd.Flags().IntVar(&debugUserIdx, "user", 0, "Google account index (0 = primary)")
+	debugCreateCmd.Flags().StringVar(&debugAccount, "account", "", "target a specific account by email")
 	rootCmd.AddCommand(debugCreateCmd)
 
 	// debug-download
 	debugDownloadCmd.Flags().StringVar(&debugDownloadUUID, "uuid", "", "UUID of an existing complete export")
+	debugDownloadCmd.Flags().StringVar(&debugAccount, "account", "", "target a specific account by email")
 	_ = debugDownloadCmd.MarkFlagRequired("uuid")
 	rootCmd.AddCommand(debugDownloadCmd)
 }
