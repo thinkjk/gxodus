@@ -159,25 +159,7 @@ Useful for Unraid template fields and docker-compose `environment:` blocks. Non-
 | `GXODUS_PUBLIC_HOSTNAME`   | Override the hostname in Pushover messages (the noVNC URL hint) |
 | `GXODUS_COMMAND`           | Override the entrypoint subcommand (default `export`; useful values: `auth`, `status`) |
 
-## Migration from single-account
-
-The pre-multi-account layout had `$CONFIG_DIR/session.enc`, `$CONFIG_DIR/chrome-profile/`, and `$CONFIG_DIR/pending_export.uuid` at the config root. The new layout puts these inside `$CONFIG_DIR/accounts/<email>/`. There's no auto-migration code — move the files manually:
-
-```sh
-docker exec gxodus sh -c '
-  EMAIL=jason@example.com   # whichever email the saved session belongs to
-  mkdir -p /config/accounts/$EMAIL
-  mv /config/session.enc        /config/accounts/$EMAIL/ 2>/dev/null || true
-  mv /config/chrome-profile     /config/accounts/$EMAIL/ 2>/dev/null || true
-  mv /config/pending_export.uuid /config/accounts/$EMAIL/ 2>/dev/null || true
-'
-```
-
-**Heads-up about output paths:** future exports land in `$OUTPUT_DIR/<email>/` per-account subdirs. Existing archives at the old `$OUTPUT_DIR/` root remain untouched — move or delete them at your discretion.
-
-If you don't know the email, pick any temporary value, then run `gxodus auth --account <real-email>` once to refresh; the new session lands in the correctly-named dir. Then `rm -rf` the temporary dir.
-
-### Notification events
+## Notification events
 
 Both `[notify].on_*` shell hooks and `[notify.pushover]` fire from the same events:
 
