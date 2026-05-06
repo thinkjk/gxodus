@@ -51,6 +51,53 @@ gxodus export --extract --output ~/google-backups
 
 Requires Go 1.26+ and a local Chromium / Chrome.
 
+## Multi-account
+
+Each Google account is its own sign-in: separate cookies, separate chromium profile, separate pending-export marker. All accounts share one `config.toml` (same `poll_interval`, `file_size`, etc.) and run sequentially on the same `GXODUS_INTERVAL` schedule.
+
+### Adding an account
+
+```sh
+docker exec -it gxodus gxodus auth --new --config /config/config.toml
+```
+
+Chromium opens in noVNC. Log in, the email is scraped from the account-chooser button on the takeout page, and a new `$CONFIG_DIR/accounts/<email>/` directory is created with the cookies, profile, and (eventually) pending marker. Repeat for each additional account.
+
+If an email scrape ever fails (Google changed the DOM), cookies are saved to `$CONFIG_DIR/.pending-auth-<unix>/` with a clear log message telling you which directory to rename to `accounts/<email>/`.
+
+### Listing and removing accounts
+
+```sh
+docker exec gxodus gxodus list-accounts
+```
+
+```
+EMAIL                                    SESSION       PENDING
+jason@example.com                        ✓ valid       -
+work@example.com                         ✓ valid       5430dfbb-...
+spouse@example.com                       ✗ no session  -
+```
+
+```sh
+# Remove (deletes session, profile, marker, AND $OUTPUT_DIR/<email>/)
+docker exec gxodus gxodus remove-account spouse@example.com
+
+# Keep the downloaded archives
+docker exec gxodus gxodus remove-account spouse@example.com --keep-exports
+```
+
+### Refreshing a single account
+
+```sh
+docker exec -it gxodus gxodus auth --account jason@example.com --config /config/config.toml
+```
+
+Uses that account's existing chrome-profile so Google sees a trusted device and (usually) skips the password challenge.
+
+### Per-cycle behavior
+
+`gxodus export` iterates `accounts/*` sequentially. Per-account isolation: a failure for account A logs and continues to account B. Pushover notifications include the account email in the title: `gxodus: re-auth needed [jason@example.com]`. On exit-1 (any account hit ErrSessionExpired), the entrypoint wipes only the failed sessions and runs `gxodus auth --account <email>` for each in turn.
+
 ## Configuration
 
 Two ways to configure: `config.toml` or environment variables. Env vars override the file when both are set. All paths default to `$XDG_CONFIG_HOME/gxodus` (or `~/.config/gxodus`); override with `GXODUS_CONFIG_DIR` (Docker default `/config`).
@@ -86,7 +133,7 @@ Useful for Unraid template fields and docker-compose `environment:` blocks. Non-
 |----------------------------|---------|
 | `GXODUS_CONFIG_DIR`        | Where session.enc, config.toml, pending_export.uuid live (default `/config` in Docker) |
 | `GXODUS_OUTPUT_DIR`        | Where downloaded archives land (default `/exports` in Docker) |
-| `GXODUS_INTERVAL`          | Sleep between exports in container loop mode (e.g. `180d`, `7d`, `1h`). Unset = one-shot. |
+| `GXODUS_INTERVAL`          | Sleep between exports in container loop mode (e.g. `180d`, `7d`, `1h`). Applies to ALL accounts in the per-cycle iteration. Unset = one-shot. |
 | `GXODUS_AUTH_RETRY`        | Sleep between auth-failure retries (default `5m`) |
 | `GXODUS_FILE_SIZE`         | Archive split size (`1GB`, `2GB`, `4GB`, `10GB`, `50GB`) |
 | `GXODUS_FILE_TYPE`         | `zip` or `tgz` |
@@ -100,6 +147,22 @@ Useful for Unraid template fields and docker-compose `environment:` blocks. Non-
 | `GXODUS_PUSHOVER_EVENTS`   | Comma-separated event list (default `auth_expired,export_complete,error`) |
 | `GXODUS_PUBLIC_HOSTNAME`   | Override the hostname in Pushover messages (the noVNC URL hint) |
 | `GXODUS_COMMAND`           | Override the entrypoint subcommand (default `export`; useful values: `auth`, `status`) |
+
+## Migration from single-account
+
+The pre-multi-account layout had `$CONFIG_DIR/session.enc`, `$CONFIG_DIR/chrome-profile/`, and `$CONFIG_DIR/pending_export.uuid` at the config root. The new layout puts these inside `$CONFIG_DIR/accounts/<email>/`. There's no auto-migration code — move the files manually:
+
+```sh
+docker exec gxodus sh -c '
+  EMAIL=jason@example.com   # whichever email the saved session belongs to
+  mkdir -p /config/accounts/$EMAIL
+  mv /config/session.enc        /config/accounts/$EMAIL/ 2>/dev/null || true
+  mv /config/chrome-profile     /config/accounts/$EMAIL/ 2>/dev/null || true
+  mv /config/pending_export.uuid /config/accounts/$EMAIL/ 2>/dev/null || true
+'
+```
+
+If you don't know the email, pick any temporary value, then run `gxodus auth --account <real-email>` once to refresh; the new session lands in the correctly-named dir. Then `rm -rf` the temporary dir.
 
 ### Notification events
 
