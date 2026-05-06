@@ -135,11 +135,30 @@ elif [ "$COMMAND" = "export" ]; then
 
             SLEEP_FOR="$GXODUS_INTERVAL"
             if [ "$EXIT" -eq 1 ]; then
-                # gxodus export exits 1 on auth failure (notify hook fires).
-                # Wipe session so next cycle re-auths via noVNC, and use the
-                # short retry interval so the user can recover quickly.
-                echo "Auth expired or failed. Wiping session — next cycle will re-auth via noVNC."
-                rm -f "$SESSION_FILE"
+                FAILED_FILE="${CONFIG_DIR}/.failed-accounts"
+                if [ -f "$FAILED_FILE" ]; then
+                    FAILED_EMAILS=$(cat "$FAILED_FILE")
+                    rm -f "$FAILED_FILE"
+                    echo "Auth expired for the following account(s):"
+                    echo "$FAILED_EMAILS"
+                    # First wipe session.enc for each.
+                    echo "$FAILED_EMAILS" | while IFS= read -r email; do
+                        [ -z "$email" ] && continue
+                        rm -f "${CONFIG_DIR}/accounts/${email}/session.enc"
+                        echo "Wiped session for $email"
+                    done
+                    # Then run gxodus auth for each.
+                    echo "$FAILED_EMAILS" | while IFS= read -r email; do
+                        [ -z "$email" ] && continue
+                        echo "Running gxodus auth --account $email"
+                        gxodus auth --account "$email" "$CONFIG_ARG" "$CONFIG_VAL" || \
+                            echo "auth for $email did not complete; will retry next cycle"
+                    done
+                else
+                    echo "No .failed-accounts file found despite exit-1; running gxodus auth (no flag)."
+                    gxodus auth "$CONFIG_ARG" "$CONFIG_VAL" || \
+                        echo "auth did not complete; will retry next cycle"
+                fi
                 SLEEP_FOR="$AUTH_RETRY_INTERVAL"
                 echo "Auth retry: will retry in $SLEEP_FOR (override with GXODUS_AUTH_RETRY) instead of $GXODUS_INTERVAL."
             elif [ "$EXIT" -ne 0 ]; then
