@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -30,15 +31,14 @@ const (
 // remoteURL is intentionally ignored: interactive login REQUIRES a local
 // chromium so we can spawn it without CDP-driven automation flags. The remote
 // browserless instance is reserved for headless export/status flows.
-func InteractiveLogin(ctx context.Context, _ string) ([]*http.Cookie, error) {
+func InteractiveLogin(ctx context.Context, _ string, profileDir string) ([]*http.Cookie, string, error) {
 	chromePath := os.Getenv("CHROME_PATH")
 	if chromePath == "" {
 		chromePath = "chromium"
 	}
 
-	profileDir := ProfileDir()
 	if err := os.MkdirAll(profileDir, 0700); err != nil {
-		return nil, fmt.Errorf("creating chrome profile dir: %w", err)
+		return nil, "", fmt.Errorf("creating chrome profile dir: %w", err)
 	}
 
 	// Remove stale singleton locks left behind if a prior chromium exited
@@ -69,7 +69,7 @@ func InteractiveLogin(ctx context.Context, _ string) ([]*http.Cookie, error) {
 	cmd.WaitDelay = 3 * time.Second
 
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("launching chromium: %w", err)
+		return nil, "", fmt.Errorf("launching chromium: %w", err)
 	}
 	defer func() {
 		if cmd.Process != nil {
@@ -79,26 +79,26 @@ func InteractiveLogin(ctx context.Context, _ string) ([]*http.Cookie, error) {
 	}()
 
 	if err := waitForDevTools(ctx, debugBaseURL, 30*time.Second); err != nil {
-		return nil, fmt.Errorf("chromium devtools not ready: %w", err)
+		return nil, "", fmt.Errorf("chromium devtools not ready: %w", err)
 	}
 
 	fmt.Println("Opening browser for Google login...")
 	fmt.Println("Please log in to your Google account. The browser will close automatically once login is detected.")
 
 	if err := pollForLogin(ctx, debugBaseURL); err != nil {
-		return nil, fmt.Errorf("waiting for login: %w", err)
+		return nil, "", fmt.Errorf("waiting for login: %w", err)
 	}
 
 	fmt.Println("Login detected! Extracting session...")
 
 	wsURL, err := getBrowserWebSocketURL(debugBaseURL)
 	if err != nil {
-		return nil, fmt.Errorf("getting browser websocket url: %w", err)
+		return nil, "", fmt.Errorf("getting browser websocket url: %w", err)
 	}
 
 	browserCtx, cancel, err := NewContext(ctx, Options{RemoteURL: wsURL})
 	if err != nil {
-		return nil, fmt.Errorf("attaching chromedp: %w", err)
+		return nil, "", fmt.Errorf("attaching chromedp: %w", err)
 	}
 	defer cancel()
 
@@ -115,11 +115,22 @@ func InteractiveLogin(ctx context.Context, _ string) ([]*http.Cookie, error) {
 		fmt.Fprintf(os.Stderr, "warmup navigate failed (proceeding anyway): %v\n", err)
 	}
 
+	// Scrape the active account's email from the takeout page's
+	// account-chooser button (aria-label encodes "Google Account: <Name> (<email>)").
+	// Falls back to "" if the scrape fails — the caller decides what to do
+	// (typically: save cookies to a .pending-auth-<unix> dir for manual rescue).
+	email := scrapeEmail(browserCtx)
+	if email != "" {
+		fmt.Printf("Detected account email: %s\n", email)
+	} else {
+		fmt.Fprintln(os.Stderr, "warning: could not detect account email from takeout page (DOM may have changed)")
+	}
+
 	cookies, err := ExtractCookies(browserCtx)
 	if err != nil {
-		return nil, fmt.Errorf("extracting cookies: %w", err)
+		return nil, "", fmt.Errorf("extracting cookies: %w", err)
 	}
-	return cookies, nil
+	return cookies, email, nil
 }
 
 func pollForLogin(ctx context.Context, baseURL string) error {
@@ -252,4 +263,31 @@ func waitForDevTools(ctx context.Context, baseURL string, timeout time.Duration)
 		time.Sleep(200 * time.Millisecond)
 	}
 	return fmt.Errorf("devtools at %s not ready within %s", baseURL, timeout)
+}
+
+// emailFromAriaLabelRE pulls the email out of strings shaped like
+// "Google Account: Jason Kramer (jason@example.com)".
+var emailFromAriaLabelRE = regexp.MustCompile(`\(([^)]+@[^)]+)\)`)
+
+// scrapeEmail reads the aria-label of the account-chooser button on the
+// takeout page and extracts the email. Returns "" if anything goes wrong.
+func scrapeEmail(ctx context.Context) string {
+	var ariaLabel string
+	err := chromedp.Run(ctx,
+		chromedp.AttributeValue(
+			`button[aria-label*="Google Account:"]`,
+			"aria-label",
+			&ariaLabel,
+			nil,
+			chromedp.ByQuery,
+		),
+	)
+	if err != nil {
+		return ""
+	}
+	m := emailFromAriaLabelRE.FindStringSubmatch(ariaLabel)
+	if len(m) < 2 {
+		return ""
+	}
+	return strings.TrimSpace(m[1])
 }
