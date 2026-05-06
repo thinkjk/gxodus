@@ -97,7 +97,7 @@ Uses that account's existing chrome-profile so Google sees a trusted device and 
 
 ### Per-cycle behavior
 
-`gxodus export` iterates `accounts/*` sequentially. Per-account isolation: a failure for account A logs and continues to account B. Pushover notifications include the account email in the title: `gxodus: re-auth needed [jason@example.com]`. On exit-1 (any account hit ErrSessionExpired), the entrypoint wipes only the failed sessions and runs `gxodus auth --account <email>` for each in turn.
+`gxodus export` iterates `accounts/*` sequentially. Per-account isolation: a failure for account A logs and continues to account B. Pushover notifications include the account email in the title: `gxodus: re-auth needed [jason@example.com]`. On exit-1 (any account hit ErrSessionExpired), the entrypoint wipes only the failed sessions and runs `gxodus auth --account <email>` for each in turn. If multiple accounts need re-auth in the same cycle, the entrypoint walks them sequentially: chromium opens in noVNC for account A, you log in, chromium closes, then opens again for account B, etc. (one noVNC session at a time — there's no parallel auth UI).
 
 ## Configuration
 
@@ -162,6 +162,8 @@ docker exec gxodus sh -c '
   mv /config/pending_export.uuid /config/accounts/$EMAIL/ 2>/dev/null || true
 '
 ```
+
+**Heads-up about output paths:** future exports land in `$OUTPUT_DIR/<email>/` per-account subdirs. Existing archives at the old `$OUTPUT_DIR/` root remain untouched — move or delete them at your discretion.
 
 If you don't know the email, pick any temporary value, then run `gxodus auth --account <real-email>` once to refresh; the new session lands in the correctly-named dir. Then `rm -rf` the temporary dir.
 
