@@ -6,11 +6,11 @@ Designed to run unattended on a NAS (Unraid, Synology, etc.) for a recurring "se
 
 ## How it works
 
-- **Auth** is interactive (one-time): Chromium opens against the container's Xvfb display, you log into Google via noVNC, session cookies get encrypted to `$CONFIG_DIR/session.enc`.
+- **Auth** is interactive (one-time per account): Chromium opens against the container's Xvfb display, you log into Google via noVNC, session cookies get encrypted to `$CONFIG_DIR/accounts/<email>/session.enc` (the email is auto-detected from the takeout DOM after login).
 - **Create / poll / list** uses Google Takeout's internal `batchexecute` HTTP API directly (cookies-only). Fast, no browser needed at runtime.
 - **Download** uses chromedp against the same persistent Chromium profile because the takeout download URL requires a fresh re-authentication token (`rapt`) that cookies alone can't supply. The first file in each cycle may prompt for a password challenge in noVNC; subsequent files in the same session reuse the rapt automatically.
-- **Resume on restart** — the export's UUID is persisted to `$CONFIG_DIR/pending_export.uuid` after creation, so a container restart mid-poll picks up where it left off instead of submitting a new (rate-limited) export.
-- **Auto-recovery** — when the saved cookies stop working, gxodus detects the redirect to Google sign-in, fires `auth_expired` (Pushover + shell hook), exits, and the entrypoint loop wipes `session.enc` and re-runs the auth flow on the next cycle so Chromium opens in noVNC for you to log in again.
+- **Resume on restart** — each account's in-flight export UUID is persisted to `$CONFIG_DIR/accounts/<email>/pending_export.uuid` after creation, so a container restart mid-poll picks up where it left off instead of submitting a new (rate-limited) export.
+- **Auto-recovery** — when an account's saved cookies stop working, gxodus detects the redirect to Google sign-in, fires `auth_expired` (Pushover + shell hook with the email in the title), and writes the affected emails to `$CONFIG_DIR/.failed-accounts` before exiting. The entrypoint loop wipes only those specific account sessions and runs `gxodus auth --account <email>` for each in turn so Chromium opens in noVNC for you to log in again.
 
 ## Quick start (Docker)
 
@@ -28,12 +28,13 @@ docker run -d \
 
 On first run there's no saved session, so the entrypoint launches Chromium for the auth flow. Open `http://<host>:6080/vnc.html`, log into Google, the browser closes automatically once cookies are extracted.
 
-After that, gxodus enters its loop:
-1. Create export → persist UUID to `pending_export.uuid`
+After that, gxodus enters its loop. Per cycle, for EACH configured account in turn:
+1. Create export → persist UUID to that account's `pending_export.uuid`
 2. Poll fhjYTc every hour until Google reports complete
 3. Drive Chromium through the download URLs (clear the one-time re-auth challenge in noVNC if Pushover pings you)
-4. Move archives into `/exports`
-5. Sleep `GXODUS_INTERVAL` (e.g. `180d`), then repeat
+4. Move archives into `/exports/<email>/`
+
+Then sleep `GXODUS_INTERVAL` (e.g. `180d`) before the next cycle.
 
 A `docker-compose.yml` and an example `.unraid-template.xml` live in the repo.
 
@@ -131,7 +132,7 @@ Useful for Unraid template fields and docker-compose `environment:` blocks. Non-
 
 | Variable                   | Purpose |
 |----------------------------|---------|
-| `GXODUS_CONFIG_DIR`        | Where session.enc, config.toml, pending_export.uuid live (default `/config` in Docker) |
+| `GXODUS_CONFIG_DIR`        | Where config.toml + per-account `accounts/<email>/{session.enc,chrome-profile,pending_export.uuid}` live (default `/config` in Docker) |
 | `GXODUS_OUTPUT_DIR`        | Where downloaded archives land (default `/exports` in Docker) |
 | `GXODUS_INTERVAL`          | Sleep between exports in container loop mode (e.g. `180d`, `7d`, `1h`). Applies to ALL accounts in the per-cycle iteration. Unset = one-shot. |
 | `GXODUS_AUTH_RETRY`        | Sleep between auth-failure retries (default `5m`) |
