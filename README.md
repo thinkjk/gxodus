@@ -99,6 +99,12 @@ Uses that account's existing chrome-profile so Google sees a trusted device and 
 
 `gxodus export` iterates `accounts/*` sequentially. Per-account isolation: a failure for account A logs and continues to account B. Pushover notifications include the account email in the title: `gxodus: re-auth needed [jason@example.com]`. On exit-1 (any account hit ErrSessionExpired), the entrypoint wipes only the failed sessions and runs `gxodus auth --account <email>` for each in turn. If multiple accounts need re-auth in the same cycle, the entrypoint walks them sequentially: chromium opens in noVNC for account A, you log in, chromium closes, then opens again for account B, etc. (one noVNC session at a time — there's no parallel auth UI).
 
+## Status page
+
+A read-only HTML page summarizing per-account state runs on port 6079 (default). Open `http://<host>:6079/` to see, for each account: session validity, current pending-export UUID, files in the per-account exports dir with sizes + modification times. Auto-refreshes every 30s.
+
+The page reads filesystem state only — no Google API calls — so it's safe to leave open and won't trigger any rate limits. Override the listen address via `GXODUS_STATUS_ADDR` (e.g. `:8080`).
+
 ## Configuration
 
 Two ways to configure: `config.toml` or environment variables. Env vars override the file when both are set. All paths default to `$XDG_CONFIG_HOME/gxodus` (or `~/.config/gxodus`); override with `GXODUS_CONFIG_DIR` (Docker default `/config`).

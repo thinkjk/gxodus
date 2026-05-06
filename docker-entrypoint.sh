@@ -71,6 +71,20 @@ run_auth() {
 # memory cost in steady state (~50 MB) is worth the UX win.
 ensure_xvfb
 
+# Start the read-only status server (port 6079 by default; override via
+# GXODUS_STATUS_ADDR). Tiny memory cost, gives the user a glanceable
+# health check at http://<host>:6079/ without ssh-ing in.
+start_status_server() {
+    if pgrep -f "gxodus status-server" >/dev/null 2>&1; then
+        return 0
+    fi
+    STATUS_ADDR="${GXODUS_STATUS_ADDR:-:6079}"
+    echo "Starting status server on $STATUS_ADDR ..."
+    gxodus status-server --addr "$STATUS_ADDR" "$CONFIG_ARG" "$CONFIG_VAL" >/tmp/status-server.log 2>&1 &
+}
+
+start_status_server
+
 build_export_args() {
     ARGS=""
     [ -n "$GXODUS_FILE_SIZE" ] && ARGS="$ARGS --file-size $GXODUS_FILE_SIZE"
