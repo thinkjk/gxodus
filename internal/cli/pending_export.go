@@ -5,47 +5,44 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/thinkjk/gxodus/internal/config"
 )
 
-// pending_export.uuid lives next to session.enc and config.toml. It marks an
-// export that's been created at Google but not yet downloaded. On startup,
-// `gxodus export` reads it and resumes polling that UUID instead of creating
-// a fresh export — so a container restart mid-poll doesn't fire another full
-// backup. Cleared after a successful download.
+// pending_export.uuid lives inside each account dir
+// ($CONFIG_DIR/accounts/<email>/pending_export.uuid). It marks an
+// export that's been created at Google but not yet downloaded. On
+// startup, gxodus export reads it and resumes polling that UUID
+// instead of creating a fresh export — so a container restart
+// mid-poll doesn't fire another full backup. Cleared after a
+// successful download.
 
-func pendingExportPath() string {
-	return filepath.Join(config.ConfigDir(), "pending_export.uuid")
+func pendingExportPath(accountDir string) string {
+	return filepath.Join(accountDir, "pending_export.uuid")
 }
 
-// readPendingExport returns the persisted UUID, or "" if no marker exists.
-// Returns an error only on filesystem trouble — a missing file is normal.
-func readPendingExport() (string, error) {
-	data, err := os.ReadFile(pendingExportPath())
+func readPendingExport(accountDir string) (string, error) {
+	data, err := os.ReadFile(pendingExportPath(accountDir))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", nil
 		}
-		return "", fmt.Errorf("reading %s: %w", pendingExportPath(), err)
+		return "", fmt.Errorf("reading %s: %w", pendingExportPath(accountDir), err)
 	}
-	uuid := strings.TrimSpace(string(data))
-	return uuid, nil
+	return strings.TrimSpace(string(data)), nil
 }
 
-func writePendingExport(uuid string) error {
-	if err := config.EnsureConfigDir(); err != nil {
-		return fmt.Errorf("ensuring config dir: %w", err)
+func writePendingExport(accountDir, uuid string) error {
+	if err := os.MkdirAll(accountDir, 0700); err != nil {
+		return fmt.Errorf("ensuring account dir: %w", err)
 	}
-	if err := os.WriteFile(pendingExportPath(), []byte(uuid+"\n"), 0600); err != nil {
-		return fmt.Errorf("writing %s: %w", pendingExportPath(), err)
+	if err := os.WriteFile(pendingExportPath(accountDir), []byte(uuid+"\n"), 0600); err != nil {
+		return fmt.Errorf("writing %s: %w", pendingExportPath(accountDir), err)
 	}
 	return nil
 }
 
-func clearPendingExport() error {
-	if err := os.Remove(pendingExportPath()); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("removing %s: %w", pendingExportPath(), err)
+func clearPendingExport(accountDir string) error {
+	if err := os.Remove(pendingExportPath(accountDir)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing %s: %w", pendingExportPath(accountDir), err)
 	}
 	return nil
 }

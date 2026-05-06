@@ -10,8 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-
-	"github.com/thinkjk/gxodus/internal/config"
 )
 
 const sessionFile = "session.enc"
@@ -25,13 +23,14 @@ type CookieData struct {
 	HTTPOnly bool   `json:"http_only"`
 }
 
-func SessionPath() string {
-	return filepath.Join(config.ConfigDir(), sessionFile)
+// SessionPath returns the session-file path for a given account dir.
+func SessionPath(accountDir string) string {
+	return filepath.Join(accountDir, sessionFile)
 }
 
-func SaveSession(cookies []*http.Cookie) error {
-	if err := config.EnsureConfigDir(); err != nil {
-		return fmt.Errorf("creating config dir: %w", err)
+func SaveSession(accountDir string, cookies []*http.Cookie) error {
+	if err := os.MkdirAll(accountDir, 0700); err != nil {
+		return fmt.Errorf("creating account dir: %w", err)
 	}
 
 	data := make([]CookieData, len(cookies))
@@ -61,15 +60,14 @@ func SaveSession(cookies []*http.Cookie) error {
 		return fmt.Errorf("encrypting session: %w", err)
 	}
 
-	if err := os.WriteFile(SessionPath(), encrypted, 0600); err != nil {
+	if err := os.WriteFile(SessionPath(accountDir), encrypted, 0600); err != nil {
 		return fmt.Errorf("writing session file: %w", err)
 	}
-
 	return nil
 }
 
-func LoadSession() ([]*http.Cookie, error) {
-	encrypted, err := os.ReadFile(SessionPath())
+func LoadSession(accountDir string) ([]*http.Cookie, error) {
+	encrypted, err := os.ReadFile(SessionPath(accountDir))
 	if err != nil {
 		return nil, fmt.Errorf("reading session file: %w", err)
 	}
@@ -104,16 +102,15 @@ func LoadSession() ([]*http.Cookie, error) {
 	return cookies, nil
 }
 
-func DeleteSession() error {
-	path := SessionPath()
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+func DeleteSession(accountDir string) error {
+	if err := os.Remove(SessionPath(accountDir)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("removing session file: %w", err)
 	}
 	return nil
 }
 
-func SessionExists() bool {
-	_, err := os.Stat(SessionPath())
+func SessionExists(accountDir string) bool {
+	_, err := os.Stat(SessionPath(accountDir))
 	return err == nil
 }
 

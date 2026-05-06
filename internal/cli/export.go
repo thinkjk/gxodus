@@ -1,11 +1,15 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/spf13/cobra"
+	"github.com/thinkjk/gxodus/internal/accounts"
 	"github.com/thinkjk/gxodus/internal/auth"
 	"github.com/thinkjk/gxodus/internal/config"
 	"github.com/thinkjk/gxodus/internal/downloader"
@@ -13,25 +17,53 @@ import (
 	"github.com/thinkjk/gxodus/internal/notify"
 	"github.com/thinkjk/gxodus/internal/poller"
 	"github.com/thinkjk/gxodus/internal/takeoutapi"
-	"github.com/spf13/cobra"
 )
 
 var (
-	outputDir      string
-	extract        bool
-	noKeepZip      bool
-	pollInterval   string
-	fileSize       string
-	fileType       string
-	frequency      string
-	noActivityLogs bool
-	resumeUUID     string
+	outputDir       string
+	extract         bool
+	noKeepZip       bool
+	pollInterval    string
+	fileSize        string
+	fileType        string
+	frequency       string
+	noActivityLogs  bool
+	resumeUUID      string
+	exportAccount   string
 )
+
+// Sentinel errors so classifyFailures can group results without
+// re-importing takeoutapi types.
+var (
+	errSessionExpiredSentinel = errors.New("session expired (sentinel)")
+	errSomeOtherFailure       = errors.New("other failure (sentinel)")
+)
+
+type accountResult struct {
+	Email string
+	Err   error // nil = success
+}
+
+// classifyFailures partitions per-account results into auth-failures
+// (use ErrSessionExpired sentinel) and other failures. Successful
+// results contribute to neither.
+func classifyFailures(results []accountResult) (auth, other []string) {
+	for _, r := range results {
+		if r.Err == nil {
+			continue
+		}
+		if errors.Is(r.Err, takeoutapi.ErrSessionExpired) || errors.Is(r.Err, errSessionExpiredSentinel) {
+			auth = append(auth, r.Email)
+			continue
+		}
+		other = append(other, r.Email)
+	}
+	return auth, other
+}
 
 var exportCmd = &cobra.Command{
 	Use:   "export",
-	Short: "Export data from Google Takeout",
-	Long:  "Initiates a Google Takeout export, polls for completion, and downloads the archive.",
+	Short: "Export data from Google Takeout (all configured accounts by default)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
 
@@ -39,187 +71,209 @@ var exportCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("loading config: %w", err)
 		}
+		applyFlagOverrides(cfg)
 
-		// Apply CLI flag overrides
-		if outputDir != "" {
-			cfg.OutputDir = outputDir
+		all, err := accounts.ScanAccounts()
+		if err != nil {
+			return fmt.Errorf("scanning accounts: %w", err)
 		}
-		if extract {
-			cfg.Extract = true
-		}
-		if noKeepZip {
-			cfg.KeepZip = false
-		}
-		if pollInterval != "" {
-			cfg.PollInterval = pollInterval
-		}
-		if fileSize != "" {
-			cfg.FileSize = fileSize
-		}
-		if fileType != "" {
-			cfg.FileType = fileType
-		}
-		if frequency != "" {
-			cfg.Frequency = frequency
-		}
-		if noActivityLogs {
-			cfg.ActivityLogs = false
-		}
-
-		// Check for saved session
-		if !auth.SessionExists() {
-			notify.Fire(cfg.Notify, "auth_expired", notify.EventData{
-				Error: "no saved session found",
-			})
-			fmt.Fprintln(os.Stderr, "No saved session. Run 'gxodus auth' to log in first.")
+		if len(all) == 0 {
+			fmt.Fprintln(os.Stderr, "No accounts configured. Run 'gxodus auth' to add one.")
+			notify.Fire(cfg.Notify, "auth_expired", notify.EventData{Error: "no accounts configured"})
 			os.Exit(1)
 		}
 
-		cookies, err := auth.LoadSession()
-		if err != nil {
-			notify.Fire(cfg.Notify, "auth_expired", notify.EventData{Error: err.Error()})
-			fmt.Fprintf(os.Stderr, "Failed to load session: %v\nRun 'gxodus auth' to log in again.\n", err)
-			os.Exit(1)
-		}
-
-		fmt.Printf("Loaded %d cookies from saved session.\n", len(cookies))
-
-		// (No pre-flight CheckSession: it duplicated the redirect-to-login
-		//  detection that InitiateExport already does on takeout.google.com,
-		//  and routing it through a remote browserless tripped Google's bot
-		//  detection on myaccount.google.com — causing false "session
-		//  expired" failures with valid cookies, and a re-auth loop.
-		//  If the session is genuinely expired, InitiateExport below will
-		//  detect the redirect and fire the same auth_expired notification.)
-
-		client, err := takeoutapi.NewClient(cookies, 0)
-		if err != nil {
-			return fmt.Errorf("creating takeout client: %w", err)
-		}
-
-		products := defaultProductSlugs()
-		if cfg.ActivityLogs {
-			products = append(products, "bond") // "bond" is the slug for Access Log Activity
-		}
-
-		sizeBytes, err := parseFileSize(cfg.FileSize)
-		if err != nil {
-			notify.Fire(cfg.Notify, "error", notify.EventData{Error: err.Error()})
-			return fmt.Errorf("file size: %w", err)
-		}
-
-		// Resolve which export to track. Precedence:
-		//   1. --export-uuid flag (explicit recovery override)
-		//   2. /config/pending_export.uuid (auto-resume on container restart)
-		//   3. fresh CreateExport (normal scheduled run)
-		var trackUUID string
-		switch {
-		case resumeUUID != "":
-			fmt.Printf("Resuming export (uuid=%s, --export-uuid flag) — skipping CreateExport.\n", resumeUUID)
-			trackUUID = resumeUUID
-		default:
-			if persisted, err := readPendingExport(); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: could not read pending-export marker: %v\n", err)
-			} else if persisted != "" {
-				fmt.Printf("Resuming export (uuid=%s, found %s) — skipping CreateExport.\n", persisted, pendingExportPath())
-				trackUUID = persisted
-			}
-		}
-
-		if trackUUID == "" {
-			newExport, err := client.CreateExport(ctx, takeoutapi.CreateExportOptions{
-				Products:  products,
-				Format:    strings.ToUpper(cfg.FileType),
-				SizeBytes: sizeBytes,
-				Frequency: cfg.Frequency,
-			})
-			if err != nil {
-				if errors.Is(err, takeoutapi.ErrSessionExpired) {
-					fmt.Fprintln(os.Stderr, "Session expired — cookies are stale and need re-auth via noVNC.")
-					notify.Fire(cfg.Notify, "auth_expired", notify.EventData{Error: err.Error()})
-					os.Exit(1)
+		// Filter by --account if provided.
+		if exportAccount != "" {
+			filtered := []accounts.Account{}
+			for _, a := range all {
+				if a.Email == exportAccount {
+					filtered = append(filtered, a)
+					break
 				}
-				fmt.Fprintf(os.Stderr, "CreateExport failed: %v\n", err)
-				notify.Fire(cfg.Notify, "error", notify.EventData{Error: err.Error()})
-				os.Exit(2)
 			}
-			if newExport.UUID == "" {
-				err := fmt.Errorf("CreateExport returned no UUID — cannot track new export. Response shape may have changed; check rpc-U5lrKc-* dumps in /config/debug")
-				fmt.Fprintln(os.Stderr, err)
-				notify.Fire(cfg.Notify, "error", notify.EventData{Error: err.Error()})
-				os.Exit(2)
+			if len(filtered) == 0 {
+				return fmt.Errorf("--account %q not found", exportAccount)
 			}
-			trackUUID = newExport.UUID
-			fmt.Printf("Export submitted (uuid=%s)\n", trackUUID)
-
-			// Persist UUID so a container restart mid-poll resumes this
-			// export instead of submitting yet another full backup.
-			if err := writePendingExport(trackUUID); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: could not persist pending-export marker: %v (restart will create a new export)\n", err)
-			}
-		}
-		notify.Fire(cfg.Notify, "export_started", notify.EventData{})
-
-		// Poll for completion
-		pollDuration, err := cfg.PollDuration()
-		if err != nil {
-			return fmt.Errorf("invalid poll interval: %w", err)
+			all = filtered
 		}
 
-		pollResult, err := poller.Poll(ctx, poller.Config{
-			Interval:   pollDuration,
-			Cookies:    cookies,
-			ExportUUID: trackUUID,
+		var results []accountResult
+		for _, a := range all {
+			if !a.HasSession {
+				fmt.Printf("[%s] no session.enc; skipping. Run 'gxodus auth --account %s' to set up.\n", a.Email, a.Email)
+				results = append(results, accountResult{Email: a.Email, Err: errSomeOtherFailure})
+				continue
+			}
+			err := runExportForAccount(ctx, a.Email, a.Dir, cfg)
+			results = append(results, accountResult{Email: a.Email, Err: err})
+		}
+
+		authFails, otherFails := classifyFailures(results)
+		if len(authFails) > 0 {
+			if err := writeFailedAccounts(authFails); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not write .failed-accounts: %v\n", err)
+			}
+			os.Exit(1)
+		}
+		if len(otherFails) > 0 {
+			os.Exit(3)
+		}
+		fmt.Println("All accounts complete.")
+		return nil
+	},
+}
+
+func runExportForAccount(ctx context.Context, email, accountDir string, cfg *config.Config) error {
+	fmt.Printf("\n=== Account: %s ===\n", email)
+
+	cookies, err := auth.LoadSession(accountDir)
+	if err != nil {
+		notify.Fire(cfg.Notify, "auth_expired", notify.EventData{Account: email, Error: err.Error()})
+		return err
+	}
+	fmt.Printf("[%s] Loaded %d cookies from saved session.\n", email, len(cookies))
+
+	client, err := takeoutapi.NewClient(cookies, 0)
+	if err != nil {
+		notify.Fire(cfg.Notify, "error", notify.EventData{Account: email, Error: err.Error()})
+		return err
+	}
+
+	products := defaultProductSlugs()
+	if cfg.ActivityLogs {
+		products = append(products, "bond")
+	}
+
+	sizeBytes, err := parseFileSize(cfg.FileSize)
+	if err != nil {
+		notify.Fire(cfg.Notify, "error", notify.EventData{Account: email, Error: err.Error()})
+		return err
+	}
+
+	var trackUUID string
+	switch {
+	case resumeUUID != "":
+		fmt.Printf("[%s] Resuming export (uuid=%s, --export-uuid flag) — skipping CreateExport.\n", email, resumeUUID)
+		trackUUID = resumeUUID
+	default:
+		if persisted, err := readPendingExport(accountDir); err != nil {
+			fmt.Fprintf(os.Stderr, "[%s] warning: could not read pending-export marker: %v\n", email, err)
+		} else if persisted != "" {
+			fmt.Printf("[%s] Resuming export (uuid=%s) — skipping CreateExport.\n", email, persisted)
+			trackUUID = persisted
+		}
+	}
+
+	if trackUUID == "" {
+		newExport, err := client.CreateExport(ctx, takeoutapi.CreateExportOptions{
+			Products:  products,
+			Format:    strings.ToUpper(cfg.FileType),
+			SizeBytes: sizeBytes,
+			Frequency: cfg.Frequency,
 		})
 		if err != nil {
 			if errors.Is(err, takeoutapi.ErrSessionExpired) {
-				fmt.Fprintln(os.Stderr, "Session expired — cookies are stale and need re-auth via noVNC.")
-				notify.Fire(cfg.Notify, "auth_expired", notify.EventData{Error: err.Error()})
-				os.Exit(1)
+				fmt.Fprintf(os.Stderr, "[%s] Session expired — cookies are stale and need re-auth via noVNC.\n", email)
+				notify.Fire(cfg.Notify, "auth_expired", notify.EventData{Account: email, Error: err.Error()})
+				return err
 			}
-			fmt.Fprintf(os.Stderr, "Poll failed: %v\n", err)
-			notify.Fire(cfg.Notify, "error", notify.EventData{Error: err.Error()})
-			os.Exit(3)
+			fmt.Fprintf(os.Stderr, "[%s] CreateExport failed: %v\n", email, err)
+			notify.Fire(cfg.Notify, "error", notify.EventData{Account: email, Error: err.Error()})
+			return err
 		}
+		if newExport.UUID == "" {
+			err := fmt.Errorf("CreateExport returned no UUID")
+			notify.Fire(cfg.Notify, "error", notify.EventData{Account: email, Error: err.Error()})
+			return err
+		}
+		trackUUID = newExport.UUID
+		fmt.Printf("[%s] Export submitted (uuid=%s)\n", email, trackUUID)
+		if err := writePendingExport(accountDir, trackUUID); err != nil {
+			fmt.Fprintf(os.Stderr, "[%s] warning: could not persist pending-export marker: %v\n", email, err)
+		}
+	}
+	notify.Fire(cfg.Notify, "export_started", notify.EventData{Account: email})
 
-		// Download archives
-		resolvedOutput := cfg.ResolveOutputDir()
-		dlResult, err := downloader.Download(ctx, pollResult.DownloadURLs, resolvedOutput, cookies, cfg.Notify)
+	pollDuration, err := cfg.PollDuration()
+	if err != nil {
+		return fmt.Errorf("invalid poll interval: %w", err)
+	}
+
+	pollResult, err := poller.Poll(ctx, poller.Config{
+		Interval:   pollDuration,
+		Cookies:    cookies,
+		ExportUUID: trackUUID,
+	})
+	if err != nil {
+		if errors.Is(err, takeoutapi.ErrSessionExpired) {
+			fmt.Fprintf(os.Stderr, "[%s] Session expired during poll.\n", email)
+			notify.Fire(cfg.Notify, "auth_expired", notify.EventData{Account: email, Error: err.Error()})
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "[%s] Poll failed: %v\n", email, err)
+		notify.Fire(cfg.Notify, "error", notify.EventData{Account: email, Error: err.Error()})
+		return err
+	}
+
+	resolvedOutput := filepath.Join(cfg.ResolveOutputDir(), email)
+	dlResult, err := downloader.Download(ctx, pollResult.DownloadURLs, resolvedOutput, cookies, cfg.Notify, accountDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[%s] Download failed: %v\n", email, err)
+		notify.Fire(cfg.Notify, "error", notify.EventData{Account: email, Error: err.Error()})
+		return err
+	}
+
+	fmt.Printf("[%s] Downloaded %d file(s), total size: %s\n", email, len(dlResult.Files), formatSize(dlResult.TotalSize))
+
+	if err := clearPendingExport(accountDir); err != nil {
+		fmt.Fprintf(os.Stderr, "[%s] warning: could not clear pending-export marker: %v\n", email, err)
+	}
+
+	if cfg.Extract {
+		extResult, err := extractor.Extract(dlResult.Files, resolvedOutput, extractor.Options{KeepZip: cfg.KeepZip})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Download failed: %v\n", err)
-			notify.Fire(cfg.Notify, "error", notify.EventData{Error: err.Error()})
-			os.Exit(3)
+			notify.Fire(cfg.Notify, "error", notify.EventData{Account: email, Error: err.Error()})
+			return fmt.Errorf("extracting archives: %w", err)
 		}
+		fmt.Printf("[%s] Extracted %d files to %s\n", email, extResult.FileCount, extResult.OutputDir)
+	}
 
-		fmt.Printf("Downloaded %d file(s), total size: %s\n", len(dlResult.Files), formatSize(dlResult.TotalSize))
+	notify.Fire(cfg.Notify, "export_complete", notify.EventData{
+		Account:    email,
+		OutputPath: resolvedOutput,
+		ExportSize: dlResult.TotalSize,
+		Duration:   pollResult.Duration,
+	})
+	fmt.Printf("[%s] Done.\n", email)
+	return nil
+}
 
-		// Download succeeded — clear the resume marker so the next scheduled
-		// run creates a fresh export instead of re-downloading this one.
-		if err := clearPendingExport(); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: could not clear pending-export marker: %v (next run may try to resume %s)\n", err, trackUUID)
-		}
-
-		// Extract if requested
-		if cfg.Extract {
-			extResult, err := extractor.Extract(dlResult.Files, resolvedOutput, extractor.Options{
-				KeepZip: cfg.KeepZip,
-			})
-			if err != nil {
-				notify.Fire(cfg.Notify, "error", notify.EventData{Error: err.Error()})
-				return fmt.Errorf("extracting archives: %w", err)
-			}
-			fmt.Printf("Extracted %d files to %s\n", extResult.FileCount, extResult.OutputDir)
-		}
-
-		notify.Fire(cfg.Notify, "export_complete", notify.EventData{
-			OutputPath: resolvedOutput,
-			ExportSize: dlResult.TotalSize,
-			Duration:   pollResult.Duration,
-		})
-
-		fmt.Println("Done!")
-		return nil
-	},
+func applyFlagOverrides(cfg *config.Config) {
+	if outputDir != "" {
+		cfg.OutputDir = outputDir
+	}
+	if extract {
+		cfg.Extract = true
+	}
+	if noKeepZip {
+		cfg.KeepZip = false
+	}
+	if pollInterval != "" {
+		cfg.PollInterval = pollInterval
+	}
+	if fileSize != "" {
+		cfg.FileSize = fileSize
+	}
+	if fileType != "" {
+		cfg.FileType = fileType
+	}
+	if frequency != "" {
+		cfg.Frequency = frequency
+	}
+	if noActivityLogs {
+		cfg.ActivityLogs = false
+	}
 }
 
 func init() {
@@ -230,8 +284,9 @@ func init() {
 	exportCmd.Flags().StringVar(&fileSize, "file-size", "", "archive split size (1GB, 2GB, 4GB, 10GB, 50GB)")
 	exportCmd.Flags().StringVar(&fileType, "file-type", "", "archive type (zip, tgz)")
 	exportCmd.Flags().StringVar(&frequency, "frequency", "", "export frequency (once, every_2_months)")
-	exportCmd.Flags().BoolVar(&noActivityLogs, "no-activity-logs", false, "skip the Access Log Activity item (off by default in Google UI; gxodus selects it by default)")
-	exportCmd.Flags().StringVar(&resumeUUID, "export-uuid", "", "skip CreateExport and resume polling an existing export by UUID (recovery flag)")
+	exportCmd.Flags().BoolVar(&noActivityLogs, "no-activity-logs", false, "skip the Access Log Activity item")
+	exportCmd.Flags().StringVar(&resumeUUID, "export-uuid", "", "skip CreateExport and resume polling an existing export by UUID")
+	exportCmd.Flags().StringVar(&exportAccount, "account", "", "limit export to a single account (default: all configured accounts)")
 	rootCmd.AddCommand(exportCmd)
 }
 

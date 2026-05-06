@@ -8,7 +8,6 @@ COMMAND="${GXODUS_COMMAND:-${1:-export}}"
 CONFIG_DIR="${GXODUS_CONFIG_DIR:-/config}"
 CONFIG_ARG="--config"
 CONFIG_VAL="${CONFIG_DIR}/config.toml"
-SESSION_FILE="${CONFIG_DIR}/session.enc"
 
 echo "gxodus: command=$COMMAND"
 echo "gxodus: config=$CONFIG_VAL"
@@ -87,8 +86,11 @@ build_export_args() {
 # Run a single export, including auto-auth if no session exists.
 # Returns the exit code of `gxodus export`.
 run_export_once() {
-    if [ ! -f "$SESSION_FILE" ]; then
-        echo "No session found. Starting authentication first..."
+    # Multi-account: any account with a session.enc counts as "we have at
+    # least one configured account". If zero accounts have a session,
+    # spawn chromium for the user to log in to the first one.
+    if ! ls "${CONFIG_DIR}"/accounts/*/session.enc >/dev/null 2>&1; then
+        echo "No account sessions found. Starting authentication first..."
         run_auth
     fi
 
@@ -135,11 +137,30 @@ elif [ "$COMMAND" = "export" ]; then
 
             SLEEP_FOR="$GXODUS_INTERVAL"
             if [ "$EXIT" -eq 1 ]; then
-                # gxodus export exits 1 on auth failure (notify hook fires).
-                # Wipe session so next cycle re-auths via noVNC, and use the
-                # short retry interval so the user can recover quickly.
-                echo "Auth expired or failed. Wiping session — next cycle will re-auth via noVNC."
-                rm -f "$SESSION_FILE"
+                FAILED_FILE="${CONFIG_DIR}/.failed-accounts"
+                if [ -f "$FAILED_FILE" ]; then
+                    FAILED_EMAILS=$(cat "$FAILED_FILE")
+                    rm -f "$FAILED_FILE"
+                    echo "Auth expired for the following account(s):"
+                    echo "$FAILED_EMAILS"
+                    # First wipe session.enc for each.
+                    echo "$FAILED_EMAILS" | while IFS= read -r email; do
+                        [ -z "$email" ] && continue
+                        rm -f "${CONFIG_DIR}/accounts/${email}/session.enc"
+                        echo "Wiped session for $email"
+                    done
+                    # Then run gxodus auth for each.
+                    echo "$FAILED_EMAILS" | while IFS= read -r email; do
+                        [ -z "$email" ] && continue
+                        echo "Running gxodus auth --account $email"
+                        gxodus auth --account "$email" "$CONFIG_ARG" "$CONFIG_VAL" || \
+                            echo "auth for $email did not complete; will retry next cycle"
+                    done
+                else
+                    echo "No .failed-accounts file found despite exit-1; running gxodus auth (no flag)."
+                    gxodus auth "$CONFIG_ARG" "$CONFIG_VAL" || \
+                        echo "auth did not complete; will retry next cycle"
+                fi
                 SLEEP_FOR="$AUTH_RETRY_INTERVAL"
                 echo "Auth retry: will retry in $SLEEP_FOR (override with GXODUS_AUTH_RETRY) instead of $GXODUS_INTERVAL."
             elif [ "$EXIT" -ne 0 ]; then
