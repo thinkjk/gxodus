@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/thinkjk/gxodus/internal/accounts"
@@ -44,6 +45,7 @@ type pageData struct {
 	Uptime   string
 	Interval string
 	Now      string
+	NovncURL string // e.g. http://<host>:6080/vnc.html — derived from request Host header
 }
 
 const pageTemplate = `<!doctype html>
@@ -56,6 +58,9 @@ const pageTemplate = `<!doctype html>
   body { font-family: -apple-system, system-ui, sans-serif; max-width: 980px; margin: 2em auto; padding: 0 1em; color: #222; }
   h1 { margin-bottom: 0.2em; }
   .meta { color: #666; font-size: 0.9em; margin-bottom: 2em; }
+  .tools { margin-bottom: 2em; padding: 0.5em 0.8em; background: #eef3fa; border-radius: 6px; font-size: 0.9em; }
+  .tools a { color: #1e3a73; font-weight: 600; text-decoration: none; }
+  .tools a:hover { text-decoration: underline; }
   .account { border: 1px solid #ddd; border-radius: 6px; padding: 1em 1.4em; margin: 1em 0; background: #fafafa; }
   .account h2 { margin: 0 0 0.4em 0; font-size: 1.1em; }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.8em; font-weight: 600; }
@@ -74,6 +79,7 @@ const pageTemplate = `<!doctype html>
 <body>
 <h1>gxodus status</h1>
 <div class="meta">{{.Hostname}} · uptime {{.Uptime}} · interval {{.Interval}} · {{.Now}}</div>
+<div class="tools"><a href="{{.NovncURL}}" target="_blank" rel="noopener">Open noVNC ↗</a> — for re-auth via the chromium UI</div>
 
 {{if .Accounts}}
 {{range .Accounts}}
@@ -117,18 +123,19 @@ func ListenAndServe(addr, outputDir string) error {
 			http.NotFound(w, r)
 			return
 		}
-		renderPage(w, outputDir)
+		renderPage(w, r, outputDir)
 	})
 	log.Printf("[statusserver] listening on %s\n", addr)
 	return http.ListenAndServe(addr, mux)
 }
 
-func renderPage(w http.ResponseWriter, outputDir string) {
+func renderPage(w http.ResponseWriter, r *http.Request, outputDir string) {
 	data := pageData{
 		Hostname: hostname(),
 		Uptime:   time.Since(startedAt).Round(time.Second).String(),
 		Interval: envOr("GXODUS_INTERVAL", "(not set / one-shot)"),
 		Now:      time.Now().Format("2006-01-02 15:04:05 MST"),
+		NovncURL: novncURL(r.Host),
 	}
 
 	all, err := accounts.ScanAccounts()
@@ -228,6 +235,25 @@ func envOr(k, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// novncURL builds a noVNC URL using the same hostname the status page
+// was reached at + the noVNC port (default 6080, override via
+// GXODUS_NOVNC_PORT). reqHost is the request's Host header
+// (host[:port]) — strip the port and use the noVNC port instead.
+func novncURL(reqHost string) string {
+	port := os.Getenv("GXODUS_NOVNC_PORT")
+	if port == "" {
+		port = "6080"
+	}
+	host := reqHost
+	if i := strings.LastIndex(host, ":"); i >= 0 {
+		host = host[:i]
+	}
+	if host == "" {
+		host = "localhost"
+	}
+	return fmt.Sprintf("http://%s:%s/vnc.html", host, port)
 }
 
 func stripTrailingNewlines(b []byte) []byte {

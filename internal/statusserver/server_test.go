@@ -41,3 +41,23 @@ func TestStripTrailingNewlines(t *testing.T) {
 		}
 	}
 }
+
+func TestNovncURL(t *testing.T) {
+	cases := []struct {
+		host string
+		env  string
+		want string
+	}{
+		{"192.168.1.10:6079", "", "http://192.168.1.10:6080/vnc.html"},
+		{"unraid.local:6079", "", "http://unraid.local:6080/vnc.html"},
+		{"localhost:6079", "8080", "http://localhost:8080/vnc.html"},
+		{"", "", "http://localhost:6080/vnc.html"},
+	}
+	for _, tc := range cases {
+		t.Setenv("GXODUS_NOVNC_PORT", tc.env)
+		got := novncURL(tc.host)
+		if got != tc.want {
+			t.Errorf("novncURL(%q, env=%q) = %q, want %q", tc.host, tc.env, got, tc.want)
+		}
+	}
+}

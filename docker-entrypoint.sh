@@ -79,8 +79,9 @@ start_status_server() {
         return 0
     fi
     STATUS_ADDR="${GXODUS_STATUS_ADDR:-:6079}"
-    echo "Starting status server on $STATUS_ADDR ..."
-    gxodus status-server --addr "$STATUS_ADDR" "$CONFIG_ARG" "$CONFIG_VAL" >/tmp/status-server.log 2>&1 &
+    OUTPUT_FOR_STATUS="${GXODUS_OUTPUT_DIR:-/exports}"
+    echo "Starting status server on $STATUS_ADDR (output=$OUTPUT_FOR_STATUS) ..."
+    gxodus status-server --addr "$STATUS_ADDR" --output "$OUTPUT_FOR_STATUS" "$CONFIG_ARG" "$CONFIG_VAL" >/tmp/status-server.log 2>&1 &
 }
 
 start_status_server

@@ -105,6 +105,8 @@ A read-only HTML page summarizing per-account state runs on port 6079 (default).
 
 The page reads filesystem state only — no Google API calls — so it's safe to leave open and won't trigger any rate limits. Override the listen address via `GXODUS_STATUS_ADDR` (e.g. `:8080`).
 
+The page includes a "Open noVNC ↗" link that points at port 6080 by default. Override with `GXODUS_NOVNC_PORT` if you've remapped noVNC to a different port.
+
 ## Configuration
 
 Two ways to configure: `config.toml` or environment variables. Env vars override the file when both are set. All paths default to `$XDG_CONFIG_HOME/gxodus` (or `~/.config/gxodus`); override with `GXODUS_CONFIG_DIR` (Docker default `/config`).
@@ -149,6 +151,8 @@ Useful for Unraid template fields and docker-compose `environment:` blocks. Non-
 | `GXODUS_EXTRACT`           | `true` to unzip after download |
 | `GXODUS_NO_KEEP_ZIP`       | `true` to delete the .zip after a successful extract |
 | `GXODUS_NO_ACTIVITY_LOGS`  | `true` to skip the (large) Access Log Activity product |
+| `GXODUS_STATUS_ADDR`       | Status server listen address (default `:6079`; e.g. `:8080`) |
+| `GXODUS_NOVNC_PORT`        | Port shown in the status page's "Open noVNC" link (default `6080`) |
 | `GXODUS_PUSHOVER_TOKEN`    | Pushover app token (built-in notification destination) |
 | `GXODUS_PUSHOVER_USER_KEY` | Pushover user key |
 | `GXODUS_PUSHOVER_EVENTS`   | Comma-separated event list (default `auth_expired,export_complete,error`) |
