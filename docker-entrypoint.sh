@@ -8,7 +8,6 @@ COMMAND="${GXODUS_COMMAND:-${1:-export}}"
 CONFIG_DIR="${GXODUS_CONFIG_DIR:-/config}"
 CONFIG_ARG="--config"
 CONFIG_VAL="${CONFIG_DIR}/config.toml"
-SESSION_FILE="${CONFIG_DIR}/session.enc"
 
 echo "gxodus: command=$COMMAND"
 echo "gxodus: config=$CONFIG_VAL"
@@ -87,8 +86,11 @@ build_export_args() {
 # Run a single export, including auto-auth if no session exists.
 # Returns the exit code of `gxodus export`.
 run_export_once() {
-    if [ ! -f "$SESSION_FILE" ]; then
-        echo "No session found. Starting authentication first..."
+    # Multi-account: any account with a session.enc counts as "we have at
+    # least one configured account". If zero accounts have a session,
+    # spawn chromium for the user to log in to the first one.
+    if ! ls "${CONFIG_DIR}"/accounts/*/session.enc >/dev/null 2>&1; then
+        echo "No account sessions found. Starting authentication first..."
         run_auth
     fi
 
