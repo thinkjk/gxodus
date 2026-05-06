@@ -46,7 +46,7 @@ func TestDownload_HappyPath_OneFile(t *testing.T) {
 	outDir := t.TempDir()
 	t.Setenv("GXODUS_CONFIG_DIR", t.TempDir())
 
-	res, err := Download(context.Background(), []string{srv.URL + "/hello.zip"}, outDir, nil, config.NotifyConfig{})
+	res, err := Download(context.Background(), []string{srv.URL + "/hello.zip"}, outDir, nil, config.NotifyConfig{}, t.TempDir())
 	if err != nil {
 		t.Fatalf("Download: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestDownload_RecoversAfterChallenge(t *testing.T) {
 	var res *Result
 	go func() {
 		var err error
-		res, err = Download(context.Background(), []string{srv.URL + "/download"}, outDir, nil, config.NotifyConfig{})
+		res, err = Download(context.Background(), []string{srv.URL + "/download"}, outDir, nil, config.NotifyConfig{}, t.TempDir())
 		resultCh <- err
 	}()
 

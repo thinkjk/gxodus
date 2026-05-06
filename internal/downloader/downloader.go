@@ -117,21 +117,23 @@ type Result struct {
 // Download fetches Takeout archives via chromedp into outputDir.
 // cookies is the authenticated Google session; notifyCfg is used to fire
 // auth_expired (Pushover + shell hook) when a re-auth challenge appears.
-func Download(ctx context.Context, urls []string, outputDir string, cookies []*http.Cookie, notifyCfg config.NotifyConfig) (*Result, error) {
+func Download(ctx context.Context, urls []string, outputDir string, cookies []*http.Cookie, notifyCfg config.NotifyConfig, accountDir string) (*Result, error) {
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return nil, fmt.Errorf("creating output dir: %w", err)
 	}
 
-	tmpDir := filepath.Join(config.ConfigDir(), "downloads-tmp")
+	// Per-account tmp dir so concurrent accounts (future) and sequential
+	// retries don't fight over the same downloads-tmp.
+	tmpDir := filepath.Join(accountDir, "downloads-tmp")
 	if err := resetTmpDir(tmpDir); err != nil {
 		return nil, err
 	}
 
-	clearStaleProfileLock(browser.ProfileDir())
+	clearStaleProfileLock(browser.ProfileDir(accountDir))
 
 	bctx, cancel, err := browser.NewContext(ctx, browser.Options{
 		Headless:    false, // headed via container's Xvfb so noVNC can show challenges
-		UserDataDir: browser.ProfileDir(),
+		UserDataDir: browser.ProfileDir(accountDir),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("opening chromedp context: %w", err)
